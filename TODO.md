@@ -47,13 +47,14 @@
 
 ## Phase 4 — Image storage + AI extraction
 
-- [ ] `lib/storage.ts` — `Storage` interface + local-disk implementation under `data/uploads/`
-- [ ] `lib/images.ts` — sharp-powered resize (thumb/medium/full) + blurhash
-- [ ] `lib/validators.ts` — Zod schemas for Recipe, Ingredient, Step, etc.
-- [ ] `lib/ai/extract-recipe.ts` — Vercel AI SDK + `gpt-4o` vision, `generateObject` with the recipe Zod schema, accepts N image URLs/buffers
-- [ ] `app/api/extract/route.ts` — POST endpoint: accepts `imageIds[]`, returns extracted recipe JSON
-- [ ] URL-import variant: `extractRecipeFromUrl(url)` that fetches the page & re-uses the same pipeline
-- [ ] Vitest covering the Zod schema validation
+- [x] `lib/storage.ts` — `Storage` interface + local-disk implementation under `data/uploads/`
+- [x] `lib/images.ts` — sharp-powered EXIF-correct resize (max 2048px) + tiny inline placeholder
+- [x] `lib/validators.ts` — Zod schemas for Recipe, Ingredient, Step, Collection, handle, slugify
+- [x] `lib/ai/extract-recipe.ts` — Vercel AI SDK + `gpt-4o` vision, `generateObject` with the recipe Zod schema, accepts image ids OR data URLs OR a URL
+- [x] `app/api/upload/route.ts` — multipart upload with size/count limits, image normalization, placeholder generation
+- [x] `app/api/extract/route.ts` — POST endpoint: accepts `imageIds[]` or `url`, returns extracted recipe JSON
+- [x] `app/uploads/[...path]/route.ts` — serves stored images with long cache headers
+- [x] Vitest covering the Zod schemas (20+ assertions)
 
 ## Phase 5 — Recipe create flow (mobile-first)
 
