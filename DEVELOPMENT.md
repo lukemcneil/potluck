@@ -220,3 +220,37 @@ Always commit-ready means: typecheck passes + build passes.
 - **shadcn 4.x default = `base-nova` style** (uses `@base-ui/react`, not radix). Components reference `@/lib/utils` for `cn()` — already created.
 - **Tailwind v4** uses CSS-first config: theme tokens live in `app/globals.css` under `@theme inline`. There is no `tailwind.config.ts` (or it's empty).
 - **Static SSG of pages that touch the DB** will fail at build time without a DB. Mark such pages `export const dynamic = "force-dynamic"` or use `noStore()`.
+
+## Tunnel mode (testing on a phone)
+
+Phones can hit the dev server two ways:
+
+1. **Same-network LAN URL** (`http://192.168.x.x:3000`) — works for browsing but **not for sign-in** (Google rejects raw IPs as redirect URIs) and not for camera capture on iOS Safari (no HTTPS).
+2. **Cloudflare Tunnel** (recommended) — gives you a real `https://xxx.trycloudflare.com` URL.
+
+Steps:
+
+```bash
+brew install cloudflare/cloudflare/cloudflared   # one time
+cloudflared tunnel --url http://localhost:3000   # starts the tunnel
+```
+
+Then in `.env.local`:
+
+```
+AUTH_TRUST_HOST="true"
+AUTH_URL="https://<the-random-tunnel>.trycloudflare.com"
+```
+
+And in Google Cloud Console → Credentials → your OAuth client, add the same URL as an Authorized JavaScript origin and `<url>/api/auth/callback/google` as an Authorized redirect URI.
+
+The `*.trycloudflare.com` host is already in `next.config.ts#allowedDevOrigins` so HMR works.
+
+Caveats:
+
+- Quick tunnels generate a **new URL each run**, which means re-pasting it into both `.env.local` and the Google OAuth client every time. For stability, set up a **named** Cloudflare Tunnel (free Cloudflare account, optional custom domain).
+- When `AUTH_URL` is set, **localhost sign-in also redirects through the tunnel**. Comment it out for purely-local work.
+
+## Useful scripts
+
+- `pnpm db:inspect` — pretty-print users / accounts / sessions / collections from the local DB. Helpful when verifying sign-in worked or debugging the AI extraction pipeline.
