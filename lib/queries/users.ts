@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, isNotNull, like, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, like, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { users, recipes } from "@/db/schema";
 
@@ -19,7 +19,12 @@ const PAGE_SIZE = 24;
  * Search users by name OR handle OR bio. Case-insensitive substring match
  * (LIKE) — usernames are short and we don't index them in FTS5. Always
  * filters out users without a public handle. Recipe count is the number
- * of public recipes the user has authored.
+ * of PUBLIC recipes the user has authored.
+ *
+ * Implemented as two queries (user list + single grouped COUNT) instead
+ * of a correlated subquery, because Drizzle's `${users.id}` / `${recipes}`
+ * interpolation inside a raw `sql\`\`` template doesn't reliably correlate
+ * to the outer query — it produced 0s for users that did have recipes.
  */
 export async function searchUsers(
   query: string,
@@ -49,32 +54,44 @@ export async function searchUsers(
       handle: users.handle,
       image: users.image,
       bio: users.bio,
-      recipeCount: sql<number>`(
-        SELECT COUNT(*) FROM ${recipes}
-        WHERE ${recipes.authorId} = ${users.id}
-          AND ${recipes.visibility} = 'public'
-      )`,
     })
     .from(users)
     .where(and(...conds))
-    .orderBy(
-      // Recent + most-recipes float to the top of empty-query browsing.
-      desc(sql`(SELECT COUNT(*) FROM ${recipes}
-        WHERE ${recipes.authorId} = ${users.id} AND ${recipes.visibility} = 'public')`),
-      asc(users.handle),
-    )
-    .limit(limit)
-    .offset(offset)
+    .orderBy(asc(users.handle))
     .all();
 
-  return rows.map((r) => ({
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const counts = db
+    .select({
+      authorId: recipes.authorId,
+      n: sql<number>`COUNT(*)`,
+    })
+    .from(recipes)
+    .where(
+      and(eq(recipes.visibility, "public"), inArray(recipes.authorId, ids)),
+    )
+    .groupBy(recipes.authorId)
+    .all();
+  const countByAuthor = new Map(counts.map((c) => [c.authorId, c.n]));
+
+  // Order by public-recipe count desc, then handle asc, then page-slice
+  // in JS. Cheap because the user list is small.
+  const enriched: UserCardData[] = rows.map((r) => ({
     id: r.id,
     name: r.name ?? null,
     handle: r.handle as string,
     image: r.image ?? null,
     bio: r.bio ?? null,
-    recipeCount: r.recipeCount ?? 0,
+    recipeCount: countByAuthor.get(r.id) ?? 0,
   }));
+  enriched.sort((a, b) => {
+    if (b.recipeCount !== a.recipeCount) return b.recipeCount - a.recipeCount;
+    return a.handle.localeCompare(b.handle);
+  });
+
+  return enriched.slice(offset, offset + limit);
 }
 
 export async function getUserByHandle(handle: string) {
