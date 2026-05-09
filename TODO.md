@@ -33,7 +33,7 @@
 - [x] Generate initial migration into `db/migrations/`
 - [x] Migration runner (`pnpm db:migrate`) using tsx + better-sqlite3 directly
 - [x] Vitest coverage proving FTS works end-to-end
-- [ ] Seed script `db/seed.ts` (a couple of demo users + recipes for dev)
+- [x] Seed script `scripts/seed-recipes.ts` (`pnpm db:seed`) — 6 demo recipes with sharp-generated hero photos, attaches to first user
 
 ## Phase 3 — Auth
 
@@ -81,7 +81,7 @@
 
 ## Phase 7 — Profile + collections
 
-- [ ] `app/(app)/u/[handle]/page.tsx` — tabs: **Recipes** | **Collections** | **Saved**
+- [~] `app/(app)/u/[handle]/page.tsx` — tabs: **Recipes** | **Collections** | **Saved** (Recipes tab live; Collections + Saved are placeholders)
 - [ ] `components/collection/CollectionCard.tsx` — cover photo, name, recipe count, visibility chip
 - [ ] `app/(app)/u/[handle]/c/[slug]/page.tsx` — collection detail (grid of recipes)
 - [ ] Server actions: `createCollection`, `updateCollection`, `deleteCollection`, `addRecipeToCollection`, `removeRecipeFromCollection`
@@ -90,7 +90,7 @@
 
 ## Phase 8 — Discover, search, save
 
-- [ ] `app/(app)/feed/page.tsx` — public recipe feed, infinite scroll
+- [~] `app/(app)/feed/page.tsx` — public recipe feed (basic grid live; infinite scroll TBD)
 - [ ] `components/filter/FilterChips.tsx` — meal type, cuisine, diet, max time, tag chips
 - [ ] `app/(app)/search/page.tsx` — query box + filters, FTS5-backed query
 - [ ] Save action: `saveRecipe(recipeId, collectionIds?)` — with auto "All Saves" collection
