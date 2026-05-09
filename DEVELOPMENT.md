@@ -266,6 +266,7 @@ Caveats:
 
 - Quick tunnels generate a **new URL each run**, which means re-pasting it into both `.env.local` and the Google OAuth client every time. For stability, set up a **named** Cloudflare Tunnel (free Cloudflare account, optional custom domain).
 - When `AUTH_URL` is set, **localhost sign-in also redirects through the tunnel**. Comment it out for purely-local work.
+- **"The origin has been unregistered from Argo tunnel"** on the phone is usually transient — the local cloudflared lost its registration with Cloudflare's edge and the request hit during the gap. Refresh the page; it almost always recovers within seconds. If it doesn't, kill `cloudflared`, restart it, then update `AUTH_URL` + Google redirect URI to the new random hostname.
 
 ## Useful scripts
 
