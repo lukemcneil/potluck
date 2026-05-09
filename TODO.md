@@ -20,28 +20,30 @@
 - [x] `theme-provider.tsx` with `next-themes`
 - [x] Fraunces (display) + Inter (body) wired up via `next/font`
 - [x] Landing page (`app/page.tsx`) with hero + 3 feature blurbs
-- [ ] **Mobile app shell**: `app/(app)/layout.tsx` with bottom tab bar (Home / Search / Add FAB / Cookbook / Profile) and top app bar
-- [ ] PWA manifest (`app/manifest.webmanifest`) + app icons in `public/icons/`
-- [ ] DEVELOPMENT.md + this TODO.md committed
+- [x] DEVELOPMENT.md + TODO.md committed
+- [x] **Mobile app shell**: `app/(app)/layout.tsx` with bottom tab bar (Home / Search / Add FAB / Cookbook / Profile) and top app bar
+- [x] PWA manifest (`app/manifest.ts`) + app icons in `public/icons/`
 
 ## Phase 2 — Database
 
-- [ ] `drizzle.config.ts`
-- [ ] `db/client.ts` — better-sqlite3 + drizzle wrapper, lives at `data/potluck.db`
-- [ ] `db/schema.ts` — all tables per DEVELOPMENT.md data model
-- [ ] FTS5 virtual table + insert/update/delete triggers (raw SQL in a migration)
-- [ ] Generate initial migration into `db/migrations/`
-- [ ] `pnpm db:push` happy-path
+- [x] `drizzle.config.ts`
+- [x] `db/client.ts` — better-sqlite3 + drizzle wrapper, lives at `data/potluck.db`
+- [x] `db/schema.ts` — all tables per DEVELOPMENT.md data model
+- [x] FTS5 virtual table + insert/update/delete triggers (raw SQL in a migration)
+- [x] Generate initial migration into `db/migrations/`
+- [x] Migration runner (`pnpm db:migrate`) using tsx + better-sqlite3 directly
+- [x] Vitest coverage proving FTS works end-to-end
 - [ ] Seed script `db/seed.ts` (a couple of demo users + recipes for dev)
 
 ## Phase 3 — Auth
 
-- [ ] `lib/auth.ts` — Auth.js v5 config with Google OAuth + Drizzle adapter
-- [ ] `app/api/auth/[...nextauth]/route.ts` handler
-- [ ] `middleware.ts` to require auth on protected routes
-- [ ] `/signin` page (clean centered layout with Google button)
-- [ ] On first sign-in, generate unique `handle` (slug from name; collision → suffix)
-- [ ] Helper `requireUser()` for server actions
+- [x] `lib/auth.ts` — Auth.js v5 config with Google OAuth + Drizzle adapter
+- [x] `app/api/auth/[...nextauth]/route.ts` handler
+- [x] Per-page auth gate via `requireSession()` helper (no edge middleware — DB sessions don't work on edge)
+- [x] `/signin` page (clean centered layout with Google button)
+- [x] On first sign-in, generate unique `handle` (slug from name; collision → numeric suffix); auto-create default "All Saves" private collection
+- [x] Helper `requireUser()` / `requireSession()` for server actions and pages
+- [x] Type augmentation so `session.user.id` and `session.user.handle` are typed
 
 ## Phase 4 — Image storage + AI extraction
 
