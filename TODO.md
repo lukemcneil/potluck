@@ -91,10 +91,10 @@
 ## Phase 8 — Discover, search, save
 
 - [~] `app/(app)/feed/page.tsx` — public recipe feed (basic grid live; infinite scroll TBD)
-- [ ] `components/filter/FilterChips.tsx` — meal type, cuisine, diet, max time, tag chips
-- [ ] `app/(app)/search/page.tsx` — query box + filters, FTS5-backed query
-- [ ] Save action: `saveRecipe(recipeId, collectionIds?)` — with auto "All Saves" collection
-- [ ] `app/(app)/cookbook/page.tsx` — saved recipes grouped by collection
+- [ ] `components/filter/FilterChips.tsx` — meal type, cuisine, diet, max time, tag chips on feed + search
+- [ ] `app/(app)/search/page.tsx` — query box + filters, FTS5-backed query (FTS table + triggers already populated)
+- [x] Save action: `saveRecipeAction(recipeId, collectionIds?)` — auto-creates "All Saves" if missing
+- [x] `app/(app)/cookbook/page.tsx` — recently saved + collections grid
 
 ## Phase 9 — PWA + polish
 
@@ -106,6 +106,19 @@
 - [ ] Accessibility pass (focus management, aria labels, keyboard nav, color contrast)
 - [ ] Lighthouse mobile pass — perf > 90, a11y > 95
 - [ ] Vitest coverage on validators, server actions, scaler math
+
+## Phase 9.5 — AI cost & observability
+
+> Per-call cost is now logged ($0.0067/extraction on `gpt-4o`, $0.0041 on `gpt-4o-mini`; see DEVELOPMENT.md). These items make spend visible and bounded.
+
+- [x] `lib/ai/pricing.ts` — pricing table + `computeCost()`
+- [x] `extractRecipe()` returns `{ recipe, cost }` and logs a structured `[ai.extract]` line
+- [x] `/api/extract` includes cost in the JSON response body
+- [ ] Persist usage: a small `aiUsage` table (userId, recipeId?, model, tokens, costUsd, createdAt) written from the API route, so we can compute totals
+- [ ] Per-user spend cap (env-configurable, e.g. `POTLUCK_USER_MONTHLY_USD_CAP=1`) — block `/api/extract` and surface a friendly "you've hit your cap, please try again next month" toast
+- [ ] Surface "this extraction cost X¢" in the AddRecipeFlow review step (transparency, low priority)
+- [ ] Admin/`/me` widget: total spend MTD + breakdown by model (only visible to the signed-in user for their own usage)
+- [ ] Auto-fallback to `gpt-4o-mini` when the user is over a soft threshold (~⅔ of cap)
 
 ## Phase 10 — Docs + deploy
 
