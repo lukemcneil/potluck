@@ -92,7 +92,8 @@
 
 - [~] `app/(app)/feed/page.tsx` — public recipe feed (basic grid live; infinite scroll TBD)
 - [ ] `components/filter/FilterChips.tsx` — meal type, cuisine, diet, max time, tag chips on feed + search
-- [ ] `app/(app)/search/page.tsx` — query box + filters, FTS5-backed query (FTS table + triggers already populated)
+- [x] `app/(app)/search/page.tsx` — debounced query box, **People + Recipes** results, FTS5-backed recipe match (title/description/ingredients), LIKE-based user match (name/handle/bio); empty-query state shows "Cooks on Potluck" + latest recipes
+- [ ] Filters layered on top of search/feed (still TODO — `FilterChips.tsx` below)
 - [x] Save action: `saveRecipeAction(recipeId, collectionIds?)` — auto-creates "All Saves" if missing
 - [x] `app/(app)/cookbook/page.tsx` — recently saved + collections grid
 
