@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
+import { ChefHat, Folder } from "lucide-react";
 
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
@@ -7,8 +8,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth } from "@/lib/auth";
 import { listRecipeCards } from "@/lib/queries/recipes";
+import { listCollectionsForUser } from "@/lib/queries/collections";
 import { RecipeCard } from "@/components/recipe/RecipeCard";
-import { ChefHat } from "lucide-react";
+import { CollectionCard } from "@/components/collection/CollectionCard";
+import { CreateCollectionDialog } from "@/components/collection/CreateCollectionDialog";
 
 export const dynamic = "force-dynamic";
 
@@ -29,11 +32,20 @@ export default async function ProfilePage({
   const session = await auth();
   const isOwnProfile = session?.user?.id === profile.id;
 
-  const recipes = await listRecipeCards({
-    authorId: profile.id,
-    publicOnly: !isOwnProfile,
-    limit: 48,
-  });
+  const [recipes, collections] = await Promise.all([
+    listRecipeCards({
+      authorId: profile.id,
+      publicOnly: !isOwnProfile,
+      limit: 48,
+    }),
+    listCollectionsForUser(profile.id, { publicOnly: !isOwnProfile }),
+  ]);
+
+  // Hide the All Saves collection from non-owners (it's always private anyway,
+  // but defensively filter the list).
+  const visibleCollections = isOwnProfile
+    ? collections
+    : collections.filter((c) => !c.isDefaultSaves);
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
@@ -60,13 +72,16 @@ export default async function ProfilePage({
           <TabsTrigger value="recipes">
             Recipes{recipes.length > 0 ? ` (${recipes.length})` : ""}
           </TabsTrigger>
-          <TabsTrigger value="collections">Collections</TabsTrigger>
-          {isOwnProfile && <TabsTrigger value="saved">Saved</TabsTrigger>}
+          <TabsTrigger value="collections">
+            Collections
+            {visibleCollections.length > 0 ? ` (${visibleCollections.length})` : ""}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="recipes" className="mt-6">
           {recipes.length === 0 ? (
             <ProfileEmpty
+              icon="chef"
               title={
                 isOwnProfile
                   ? "You haven't added a recipe yet"
@@ -88,29 +103,54 @@ export default async function ProfilePage({
             </ul>
           )}
         </TabsContent>
-        <TabsContent value="collections" className="mt-6">
-          <ProfileEmpty
-            title="No collections yet"
-            body="Collections let you group recipes — &lsquo;Mom&apos;s Recipes,&rsquo; &lsquo;Weeknight Dinners,&rsquo; etc. Coming up next."
-          />
-        </TabsContent>
-        {isOwnProfile && (
-          <TabsContent value="saved" className="mt-6">
+
+        <TabsContent value="collections" className="mt-6 space-y-4">
+          {isOwnProfile && (
+            <div className="flex justify-end">
+              <CreateCollectionDialog />
+            </div>
+          )}
+          {visibleCollections.length === 0 ? (
             <ProfileEmpty
-              title="Nothing saved yet"
-              body="Recipes you save from other cooks will appear here."
+              icon="folder"
+              title="No collections yet"
+              body={
+                isOwnProfile
+                  ? "Group recipes — \u2018Mom\u2019s Recipes,\u2019 \u2018Weeknight Dinners,\u2019 etc. Tap New collection to start."
+                  : "This cook hasn't shared any collections yet."
+              }
             />
-          </TabsContent>
-        )}
+          ) : (
+            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visibleCollections.map((c) => (
+                <li key={c.id}>
+                  <CollectionCard
+                    collection={c}
+                    viewerHandle={profile.handle}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function ProfileEmpty({ title, body }: { title: string; body: string }) {
+function ProfileEmpty({
+  title,
+  body,
+  icon,
+}: {
+  title: string;
+  body: string;
+  icon: "chef" | "folder";
+}) {
+  const Icon = icon === "chef" ? ChefHat : Folder;
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
-      <ChefHat className="size-8 text-muted-foreground" />
+      <Icon className="size-8 text-muted-foreground" />
       <h3 className="mt-3 font-display text-lg font-semibold">{title}</h3>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
     </div>

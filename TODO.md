@@ -81,11 +81,11 @@
 
 ## Phase 7 — Profile + collections
 
-- [~] `app/(app)/u/[handle]/page.tsx` — tabs: **Recipes** | **Collections** | **Saved** (Recipes tab live; Collections + Saved are placeholders)
-- [ ] `components/collection/CollectionCard.tsx` — cover photo, name, recipe count, visibility chip
-- [ ] `app/(app)/u/[handle]/c/[slug]/page.tsx` — collection detail (grid of recipes)
-- [ ] Server actions: `createCollection`, `updateCollection`, `deleteCollection`, `addRecipeToCollection`, `removeRecipeFromCollection`
-- [ ] `components/collection/CollectionPicker.tsx` — multi-select dialog used during save / from recipe page
+- [x] `app/(app)/u/[handle]/page.tsx` — tabs: **Recipes** | **Collections** (+ collection count); `/cookbook` covers the viewer's own saved view
+- [x] `components/collection/CollectionCard.tsx` — cover photo (explicit OR first-recipe hero), name, recipe count, visibility chip
+- [x] `app/(app)/u/[handle]/c/[slug]/page.tsx` — collection detail (grid of recipes) with edit/delete menu for owner
+- [x] Server actions: `createCollection`, `updateCollection`, `deleteCollection`, `addRecipeToCollection`, `removeRecipeFromCollection`, `saveRecipe`, `unsaveRecipe`
+- [x] `components/recipe/SaveButton.tsx` — multi-select dialog with inline create-new collection (used on `/r/[id]` for non-author viewers)
 - [ ] Profile editor: change name, handle, avatar (small dialog)
 
 ## Phase 8 — Discover, search, save

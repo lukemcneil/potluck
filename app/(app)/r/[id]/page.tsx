@@ -8,10 +8,15 @@ import { db } from "@/db/client";
 import { users } from "@/db/schema";
 import { getRecipe } from "@/lib/actions/recipes";
 import { auth } from "@/lib/auth";
+import {
+  getSaveStateForRecipe,
+  listCollectionsForUser,
+} from "@/lib/queries/collections";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { SaveButton } from "@/components/recipe/SaveButton";
 
 export const dynamic = "force-dynamic";
 
@@ -46,11 +51,22 @@ export default async function RecipePage({
   const totalMin =
     (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
 
+  // Pull save state + collection list when there's a viewer who isn't the
+  // author. Authors don't need a save button on their own recipe.
+  const viewerCollections =
+    session?.user?.id && !isAuthor
+      ? await listCollectionsForUser(session.user.id)
+      : [];
+  const saveState =
+    session?.user?.id && !isAuthor
+      ? await getSaveStateForRecipe(session.user.id, recipe.id)
+      : null;
+
   return (
     <article className="mx-auto w-full max-w-3xl px-4 pt-4 pb-16 sm:px-6">
       {hero && (
         <div className="relative overflow-hidden rounded-2xl bg-muted">
-          <div className="relative aspect-[4/3] w-full">
+          <div className="relative aspect-4/3 w-full">
             <Image
               src={hero.path}
               alt={recipe.title}
@@ -129,16 +145,29 @@ export default async function RecipePage({
           )}
         </div>
 
-        {isAuthor && (
-          <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
+          {isAuthor && (
             <Link href={`/r/${recipe.id}/edit`}>
               <Button size="sm" variant="outline" className="gap-1.5">
                 <Pencil className="size-3.5" />
                 Edit
               </Button>
             </Link>
-          </div>
-        )}
+          )}
+          {!isAuthor && saveState && (
+            <SaveButton
+              recipeId={recipe.id}
+              initiallySaved={saveState.saved}
+              initialCollectionIds={saveState.collectionIds}
+              collections={viewerCollections.map((c) => ({
+                id: c.id,
+                name: c.name,
+                isDefaultSaves: c.isDefaultSaves,
+              }))}
+              size="sm"
+            />
+          )}
+        </div>
       </header>
 
       {ingredients.length > 0 && (

@@ -195,6 +195,7 @@ Components land in `components/ui/`. Don't hand-edit unless you know what you're
 5. **Mobile-first** with PWA installability. Desktop is fully supported but not the primary target.
 6. **Recipe upload UX**: User chooses *Extract recipe* (default, AI-parsed, editable preview) or *Just save photos* (image-only recipe, no parsing).
 7. **Categorization**: 3 layers — Collections (user folders) + structured taxonomy (mealType/cuisine/diet) + free-form tags.
+   - **Saves model**: each user has an auto-created `All Saves` collection (`isDefaultSaves: true`, `private`) that's created on first sign-in (or lazily by `saveRecipeAction`). The flat `saves` table is the canonical "is this saved?" lookup; `All Saves` mirrors it. `saveRecipeAction(recipeId, [extraCollectionIds])` adds to both. `unsaveRecipeAction(recipeId)` removes from `saves` and from EVERY collection the user owns. Removing from a single non-default collection uses `removeRecipeFromCollectionAction` and does NOT clear the `saves` row.
 8. **Hosting**: undecided. Code stays portable. Likely Fly.io with a persistent volume, or Cloudflare Tunnel from home.
 
 ---
