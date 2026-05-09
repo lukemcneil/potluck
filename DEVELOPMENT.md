@@ -203,14 +203,29 @@ Components land in `components/ui/`. Don't hand-edit unless you know what you're
 ## Build / lint / test
 
 ```bash
-pnpm typecheck   # tsc --noEmit
-pnpm build       # next build (also runs typecheck)
-pnpm lint        # eslint
-pnpm test        # vitest run
-pnpm format      # prettier --write .
+pnpm typecheck      # tsc --noEmit
+pnpm build          # next build (also runs typecheck)
+pnpm lint           # eslint
+pnpm test           # vitest run
+pnpm format         # prettier --write .
+
+pnpm db:seed        # insert demo recipes (idempotent)
+pnpm db:inspect     # pretty-print users/sessions/collections
+pnpm test:extract   # end-to-end smoke test of image -> AI -> structured recipe
 ```
 
 Always commit-ready means: typecheck passes + build passes.
+
+### `pnpm test:extract`
+
+Runs the same `extractRecipe()` function the `/api/extract` endpoint uses, against either:
+
+- a synthetic recipe-card image (default — see `scripts/test-extract.ts`), or
+- a path to your own image: `pnpm test:extract path/to/recipe.jpg`
+
+A copy of the synthetic card lives at `test-fixtures/synthetic-tomato-soup.jpg`; you can also drag it into the `/add` flow in the browser to exercise the full UI path.
+
+**Important contract**: `extractedRecipeSchema` (in `lib/validators.ts`) must stay strict-mode-compatible. OpenAI Responses API + structured outputs requires every property to be in `required[]`; optional fields are expressed with `.nullable()` (not `.optional()`). Adding a `.optional()` field there will surface as a 400 from the OpenAI API at runtime.
 
 ---
 

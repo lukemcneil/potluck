@@ -54,28 +54,33 @@ export const recipeFormSchema = z.object({
 export type RecipeFormInput = z.input<typeof recipeFormSchema>;
 export type RecipeFormOutput = z.output<typeof recipeFormSchema>;
 
+// OpenAI's Responses API + structured outputs runs in strict mode which
+// requires EVERY property to be in `required[]`. Optional fields are
+// expressed as `nullable: true` instead of being absent. So this schema
+// uses `.nullable()` (not `.optional()`) for fields the model may omit,
+// and consumers convert null -> undefined when handing off to the form.
 export const extractedRecipeSchema = z.object({
   title: z.string().trim().min(1).max(160),
-  description: z.string().trim().max(2000).optional().nullable(),
+  description: z.string().trim().max(2000).nullable(),
   ingredients: z
     .array(
       z.object({
-        quantity: z.string().trim().max(40).optional().nullable(),
-        unit: z.string().trim().max(40).optional().nullable(),
+        quantity: z.string().trim().max(40).nullable(),
+        unit: z.string().trim().max(40).nullable(),
         name: z.string().trim().min(1).max(120),
-        note: z.string().trim().max(200).optional().nullable(),
+        note: z.string().trim().max(200).nullable(),
       }),
     )
     .min(1, "Recipe must have at least one ingredient")
     .max(80),
   steps: z.array(z.string().trim().min(1).max(2000)).min(1).max(60),
-  prepMinutes: z.number().int().min(0).max(60 * 24).optional().nullable(),
-  cookMinutes: z.number().int().min(0).max(60 * 24).optional().nullable(),
-  servings: z.string().trim().max(40).optional().nullable(),
-  mealType: z.enum(MEAL_TYPES).optional().nullable(),
-  cuisine: z.string().trim().max(60).optional().nullable(),
-  suggestedDiets: z.array(z.string().trim().max(40)).max(10).optional(),
-  suggestedTags: z.array(z.string().trim().max(40)).max(10).optional(),
+  prepMinutes: z.number().int().min(0).max(60 * 24).nullable(),
+  cookMinutes: z.number().int().min(0).max(60 * 24).nullable(),
+  servings: z.string().trim().max(40).nullable(),
+  mealType: z.enum(MEAL_TYPES).nullable(),
+  cuisine: z.string().trim().max(60).nullable(),
+  suggestedDiets: z.array(z.string().trim().max(40)).max(10),
+  suggestedTags: z.array(z.string().trim().max(40)).max(10),
 });
 export type ExtractedRecipe = z.infer<typeof extractedRecipeSchema>;
 

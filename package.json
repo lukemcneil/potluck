@@ -17,7 +17,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:inspect": "tsx scripts/inspect-db.ts",
-    "db:seed": "tsx scripts/seed-recipes.ts"
+    "db:seed": "tsx scripts/seed-recipes.ts",
+    "test:extract": "tsx -r ./scripts/_stub-server-only.cjs scripts/test-extract.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.63",
@@ -37,6 +38,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.75.0",
+    "server-only": "^0.0.1",
     "sharp": "^0.34.5",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",

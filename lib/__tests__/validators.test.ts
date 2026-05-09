@@ -46,53 +46,68 @@ describe("recipeFormSchema", () => {
 });
 
 describe("extractedRecipeSchema", () => {
+  // Schema is strict (all fields required, optional ones are nullable)
+  // because OpenAI structured-outputs strict mode demands every key to be
+  // in `required[]` with `nullable: true` for omittable fields.
+  const baseValid = {
+    title: "Banana Bread",
+    description: "A warm classic.",
+    ingredients: [
+      { quantity: "3", unit: null, name: "ripe bananas", note: "mashed" },
+      { quantity: "1/2", unit: "cup", name: "butter", note: "melted" },
+    ],
+    steps: ["Mash bananas.", "Mix dry and wet.", "Bake at 350F for 1 hour."],
+    prepMinutes: 10,
+    cookMinutes: 60,
+    servings: "1 loaf",
+    mealType: "dessert" as const,
+    cuisine: "american",
+    suggestedDiets: ["vegetarian"],
+    suggestedTags: ["make-ahead", "freezer-friendly"],
+  };
+
   it("requires at least one ingredient and one step", () => {
     expect(
-      extractedRecipeSchema.safeParse({
-        title: "x",
-        ingredients: [],
-        steps: ["a"],
-      }).success,
+      extractedRecipeSchema.safeParse({ ...baseValid, ingredients: [] })
+        .success,
     ).toBe(false);
-
-    expect(
-      extractedRecipeSchema.safeParse({
-        title: "x",
-        ingredients: [{ name: "a" }],
-        steps: [],
-      }).success,
-    ).toBe(false);
+    expect(extractedRecipeSchema.safeParse({ ...baseValid, steps: [] }).success)
+      .toBe(false);
   });
 
   it("accepts a realistic AI output", () => {
-    const r = extractedRecipeSchema.parse({
-      title: "Banana Bread",
-      description: "A warm classic.",
-      ingredients: [
-        { quantity: "3", unit: null, name: "ripe bananas", note: "mashed" },
-        { quantity: "1/2", unit: "cup", name: "butter", note: "melted" },
-      ],
-      steps: ["Mash bananas.", "Mix dry and wet.", "Bake at 350F for 1 hour."],
-      prepMinutes: 10,
-      cookMinutes: 60,
-      servings: "1 loaf",
-      mealType: "dessert",
-      cuisine: "american",
-      suggestedDiets: ["vegetarian"],
-      suggestedTags: ["make-ahead", "freezer-friendly"],
-    });
+    const r = extractedRecipeSchema.parse(baseValid);
     expect(r.ingredients.length).toBe(2);
     expect(r.mealType).toBe("dessert");
   });
 
+  it("requires every key to be present (strict-mode contract)", () => {
+    // Drop a single optional-but-required-nullable field; should fail.
+    const { description: _omit, ...withoutDescription } = baseValid;
+    void _omit;
+    expect(extractedRecipeSchema.safeParse(withoutDescription).success).toBe(
+      false,
+    );
+  });
+
+  it("accepts null in place of optional values", () => {
+    const r = extractedRecipeSchema.parse({
+      ...baseValid,
+      description: null,
+      prepMinutes: null,
+      cookMinutes: null,
+      servings: null,
+      mealType: null,
+      cuisine: null,
+    });
+    expect(r.title).toBe("Banana Bread");
+    expect(r.mealType).toBeNull();
+  });
+
   it("rejects an unknown mealType", () => {
     expect(
-      extractedRecipeSchema.safeParse({
-        title: "x",
-        ingredients: [{ name: "a" }],
-        steps: ["b"],
-        mealType: "elevenses",
-      }).success,
+      extractedRecipeSchema.safeParse({ ...baseValid, mealType: "elevenses" })
+        .success,
     ).toBe(false);
   });
 });
