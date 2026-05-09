@@ -8,6 +8,7 @@ import {
   type ExtractedRecipe,
 } from "@/lib/validators";
 import { storage } from "@/lib/storage";
+import { computeCost, formatUsd, type CostBreakdown } from "@/lib/ai/pricing";
 
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 
@@ -30,11 +31,19 @@ export type ExtractInput =
   | { kind: "imageDataUrls"; imageDataUrls: string[] }
   | { kind: "url"; url: string };
 
+export type ExtractResult = {
+  recipe: ExtractedRecipe;
+  cost: CostBreakdown;
+};
+
 /**
  * Extract a structured recipe from a set of images (by stored id) or a URL.
+ * Returns the recipe + a per-call cost breakdown. Logs the cost as a single
+ * structured line so it shows up in dev server output.
+ *
  * Throws if OPENAI_API_KEY is missing.
  */
-export async function extractRecipe(input: ExtractInput): Promise<ExtractedRecipe> {
+export async function extractRecipe(input: ExtractInput): Promise<ExtractResult> {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
       "OPENAI_API_KEY is not set. Add it to .env.local before using recipe extraction.",
@@ -42,15 +51,37 @@ export async function extractRecipe(input: ExtractInput): Promise<ExtractedRecip
   }
 
   const userParts = await buildUserContent(input);
+  const imageCount =
+    input.kind === "imageIds"
+      ? input.imageIds.length
+      : input.kind === "imageDataUrls"
+        ? input.imageDataUrls.length
+        : 0;
 
-  const { object } = await generateObject({
+  const startedAt = Date.now();
+  const { object, usage } = await generateObject({
     model: openai(MODEL),
     schema: extractedRecipeSchema,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userParts }],
   });
+  const elapsedMs = Date.now() - startedAt;
 
-  return object;
+  const cost = computeCost(MODEL, {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cachedInputTokens: usage.cachedInputTokens,
+  });
+
+  // One structured line per call so a future log scraper can parse it.
+  console.log(
+    `[ai.extract] model=${MODEL} kind=${input.kind} images=${imageCount} ` +
+      `tokens=${cost.inputTokens}+${cost.outputTokens}=${cost.inputTokens + cost.outputTokens} ` +
+      `cached=${cost.cachedInputTokens} cost=${formatUsd(cost.totalCost)} ` +
+      `latency=${(elapsedMs / 1000).toFixed(2)}s`,
+  );
+
+  return { recipe: object, cost };
 }
 
 async function buildUserContent(input: ExtractInput) {

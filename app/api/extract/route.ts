@@ -40,8 +40,17 @@ export async function POST(req: Request) {
   }
 
   try {
-    const recipe = await extractRecipe(parsed.data);
-    return NextResponse.json({ recipe });
+    const { recipe, cost } = await extractRecipe(parsed.data);
+    return NextResponse.json({
+      recipe,
+      cost: {
+        modelId: cost.modelId,
+        inputTokens: cost.inputTokens,
+        outputTokens: cost.outputTokens,
+        cachedInputTokens: cost.cachedInputTokens,
+        totalUsd: cost.totalCost,
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Extraction failed";
     const isUserError =

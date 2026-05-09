@@ -65,13 +65,25 @@ async function main() {
 
   console.log("→ Calling extractRecipe() with gpt-4o vision...\n");
   const startedAt = Date.now();
-  const recipe = await extractRecipe({
+  const { recipe, cost } = await extractRecipe({
     kind: "imageIds",
     imageIds: [stored.id],
   });
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
 
   console.log(`✓ Got structured recipe in ${elapsed}s\n`);
+  console.log("---- COST ----");
+  console.log({
+    model: cost.modelId,
+    inputTokens: cost.inputTokens,
+    outputTokens: cost.outputTokens,
+    cachedInputTokens: cost.cachedInputTokens,
+    inputCostUsd: round(cost.inputCost, 6),
+    cachedInputCostUsd: round(cost.cachedInputCost, 6),
+    outputCostUsd: round(cost.outputCost, 6),
+    totalUsd: round(cost.totalCost, 6),
+    perThousandUsd: round(cost.totalCost * 1000, 2),
+  });
   console.log("---- TITLE ----");
   console.log(recipe.title);
   if (recipe.description) {
@@ -154,6 +166,11 @@ async function renderSyntheticRecipeCard(): Promise<Buffer> {
   `;
 
   return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+}
+
+function round(n: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(n * f) / f;
 }
 
 main().catch((err) => {

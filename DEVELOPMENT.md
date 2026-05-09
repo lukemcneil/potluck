@@ -227,6 +227,24 @@ A copy of the synthetic card lives at `test-fixtures/synthetic-tomato-soup.jpg`;
 
 **Important contract**: `extractedRecipeSchema` (in `lib/validators.ts`) must stay strict-mode-compatible. OpenAI Responses API + structured outputs requires every property to be in `required[]`; optional fields are expressed with `.nullable()` (not `.optional()`). Adding a `.optional()` field there will surface as a 400 from the OpenAI API at runtime.
 
+### AI cost per extraction (measured)
+
+`extractRecipe()` logs a `[ai.extract]` line per call with token usage and cost. The `/api/extract` endpoint also includes a `cost` field in the response body. Pricing math lives in `lib/ai/pricing.ts`; bump it when OpenAI changes prices.
+
+Measured against `test-fixtures/synthetic-tomato-soup.jpg` (1 image, ~140 KB, single page recipe card):
+
+| Model         | Input tokens | Output tokens | Cost / call | Cost per 1k calls |
+| ------------- | ------------:| -------------:| -----------:| -----------------:|
+| `gpt-4o`      | ~1,300       | ~350          | **$0.0067** | **$6.73**         |
+| `gpt-4o-mini` | ~26,000      | ~350          | **$0.0041** | **$4.11**         |
+
+Notes:
+
+- `gpt-4o-mini` bills images at much higher per-image token counts than `gpt-4o` (OpenAI does this to roughly normalize the dollar cost — so a `0.15 / 0.60` per-million rate doesn't translate into a 16× discount for vision workloads). For our use case, mini is **~40% cheaper**, not ~94% cheaper.
+- Quality bias: `gpt-4o` is the better choice for messy real-world cards (handwriting, glare, multi-column magazine layouts). `gpt-4o-mini` does fine on clean printed text. Switch via the `OPENAI_MODEL` env var.
+- Multi-image recipes (multi-page or front+back of a card) scale linearly in image tokens; expect ~$0.01 per 2-image extraction on `gpt-4o`.
+- A `failed-validation` error from OpenAI structured outputs costs the same as a successful call (we still get billed for the input + output tokens).
+
 ---
 
 ## Gotchas
