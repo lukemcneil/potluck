@@ -1,0 +1,482 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useForm, useFieldArray } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Plus, Trash2, GripVertical, Loader2, Globe, Lock, EyeOff, X } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  recipeFormSchema,
+  KNOWN_DIETS,
+  type RecipeFormInput,
+  type RecipeFormOutput,
+} from "@/lib/validators";
+import { MEAL_TYPES, VISIBILITY } from "@/db/schema";
+import { cn } from "@/lib/utils";
+import { createRecipeAction } from "@/lib/actions/recipes";
+import type { UploadedPhoto } from "@/components/upload/PhotoPicker";
+import { PhotoPicker } from "@/components/upload/PhotoPicker";
+
+type Props = {
+  initial?: Partial<RecipeFormInput>;
+  initialPhotos?: UploadedPhoto[];
+};
+
+const DEFAULTS: RecipeFormInput = {
+  title: "",
+  description: "",
+  prepMinutes: null,
+  cookMinutes: null,
+  servings: "",
+  mealType: null,
+  cuisine: "",
+  diets: [],
+  tags: [],
+  visibility: "public",
+  kind: "structured",
+  sourceUrl: null,
+  ingredients: [{ position: 0, name: "" }],
+  steps: [{ position: 0, body: "" }],
+  photoIds: [],
+};
+
+export function RecipeForm({ initial, initialPhotos = [] }: Props) {
+  const [photos, setPhotos] = useState<UploadedPhoto[]>(initialPhotos);
+  const [tagInput, setTagInput] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const form = useForm<RecipeFormInput, unknown, RecipeFormOutput>({
+    resolver: zodResolver(recipeFormSchema),
+    defaultValues: {
+      ...DEFAULTS,
+      ...initial,
+      ingredients:
+        initial?.ingredients?.length
+          ? initial.ingredients
+          : DEFAULTS.ingredients,
+      steps: initial?.steps?.length ? initial.steps : DEFAULTS.steps,
+      diets: initial?.diets ?? [],
+      tags: initial?.tags ?? [],
+    },
+  });
+
+  const ingredients = useFieldArray({
+    control: form.control,
+    name: "ingredients",
+  });
+  const steps = useFieldArray({ control: form.control, name: "steps" });
+
+  const watchedDiets = form.watch("diets") ?? [];
+  const watchedTags = form.watch("tags") ?? [];
+  const watchedVisibility = form.watch("visibility");
+
+  const toggleDiet = (diet: string) => {
+    const next = watchedDiets.includes(diet)
+      ? watchedDiets.filter((d) => d !== diet)
+      : [...watchedDiets, diet];
+    form.setValue("diets", next, { shouldDirty: true });
+  };
+
+  const addTag = () => {
+    const t = tagInput.trim().toLowerCase();
+    if (!t) return;
+    if (watchedTags.includes(t)) {
+      setTagInput("");
+      return;
+    }
+    form.setValue("tags", [...watchedTags, t], { shouldDirty: true });
+    setTagInput("");
+  };
+
+  const removeTag = (tag: string) => {
+    form.setValue(
+      "tags",
+      watchedTags.filter((t) => t !== tag),
+      { shouldDirty: true },
+    );
+  };
+
+  const onSubmit = form.handleSubmit((values) => {
+    setSubmitError(null);
+    const ingredientCount = values.ingredients?.length ?? 0;
+    const payload: RecipeFormOutput = {
+      ...values,
+      photoIds: photos.map((p) => p.publicPath),
+      kind:
+        photos.length > 0 && ingredientCount === 0
+          ? "photos_only"
+          : values.kind,
+    };
+
+    const fd = new FormData();
+    fd.set("payload", JSON.stringify(payload));
+
+    startTransition(async () => {
+      const result = await createRecipeAction({}, fd);
+      // server action redirects on success, so we only get here on error
+      if (result?.error) {
+        setSubmitError(result.error);
+      }
+    });
+  });
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-8">
+      <section>
+        <h2 className="font-display text-lg font-semibold">Photos</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Add up to 8 photos. They&apos;ll appear on the recipe in the order
+          you arrange them.
+        </p>
+        <div className="mt-3">
+          <PhotoPicker
+            photos={photos}
+            onChange={setPhotos}
+            maxPhotos={8}
+            defaultCamera
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="font-display text-lg font-semibold">The basics</h2>
+
+        <Field label="Title" error={form.formState.errors.title?.message}>
+          <Input
+            {...form.register("title")}
+            placeholder="Grandma's Apple Pie"
+            autoComplete="off"
+            className="text-base sm:text-lg"
+          />
+        </Field>
+
+        <Field
+          label="Short description"
+          hint="A line or two about the dish."
+        >
+          <Textarea
+            {...form.register("description")}
+            rows={2}
+            placeholder="A flaky, buttery classic with cinnamon-spiced apples."
+          />
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <Field label="Prep (min)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              {...form.register("prepMinutes", {
+                setValueAs: numericFieldSetter,
+              })}
+              placeholder="15"
+            />
+          </Field>
+          <Field label="Cook (min)">
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              {...form.register("cookMinutes", {
+                setValueAs: numericFieldSetter,
+              })}
+              placeholder="45"
+            />
+          </Field>
+          <Field label="Servings">
+            <Input
+              {...form.register("servings")}
+              placeholder="6"
+              autoComplete="off"
+            />
+          </Field>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">Ingredients</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              ingredients.append({
+                position: ingredients.fields.length,
+                name: "",
+              })
+            }
+            className="gap-1"
+          >
+            <Plus className="size-4" />
+            Add
+          </Button>
+        </div>
+
+        <ul className="space-y-2">
+          {ingredients.fields.map((field, i) => (
+            <li key={field.id} className="grid grid-cols-12 gap-2">
+              <div className="col-span-2">
+                <Input
+                  {...form.register(`ingredients.${i}.quantity`)}
+                  placeholder="1 1/2"
+                  aria-label="Quantity"
+                />
+              </div>
+              <div className="col-span-3">
+                <Input
+                  {...form.register(`ingredients.${i}.unit`)}
+                  placeholder="cups"
+                  aria-label="Unit"
+                />
+              </div>
+              <div className="col-span-6">
+                <Input
+                  {...form.register(`ingredients.${i}.name`)}
+                  placeholder="all-purpose flour"
+                  aria-label="Name"
+                />
+              </div>
+              <div className="col-span-1 flex">
+                <button
+                  type="button"
+                  onClick={() => ingredients.remove(i)}
+                  aria-label="Remove ingredient"
+                  className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
+              <div className="col-span-12">
+                <Input
+                  {...form.register(`ingredients.${i}.note`)}
+                  placeholder="optional note (sifted, melted, etc.)"
+                  aria-label="Note"
+                  className="text-xs"
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-2">
+          <h2 className="font-display text-lg font-semibold">Steps</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              steps.append({ position: steps.fields.length, body: "" })
+            }
+            className="gap-1"
+          >
+            <Plus className="size-4" />
+            Add
+          </Button>
+        </div>
+
+        <ol className="space-y-2">
+          {steps.fields.map((field, i) => (
+            <li key={field.id} className="flex items-start gap-2">
+              <span className="mt-2 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                {i + 1}
+              </span>
+              <Textarea
+                {...form.register(`steps.${i}.body`)}
+                placeholder="Describe the step..."
+                rows={2}
+                className="flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => steps.remove(i)}
+                aria-label="Remove step"
+                className="mt-1 flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="space-y-4">
+        <h2 className="font-display text-lg font-semibold">Categorize</h2>
+
+        <Field label="Meal type" hint="Helps people find this when filtering.">
+          <select
+            {...form.register("mealType")}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm capitalize focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            <option value="">Choose one (optional)</option>
+            {MEAL_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Cuisine">
+          <Input
+            {...form.register("cuisine")}
+            placeholder="italian, thai, american..."
+            autoComplete="off"
+          />
+        </Field>
+
+        <div>
+          <Label>Diets</Label>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {KNOWN_DIETS.map((diet) => {
+              const on = watchedDiets.includes(diet);
+              return (
+                <button
+                  type="button"
+                  key={diet}
+                  onClick={() => toggleDiet(diet)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium capitalize transition",
+                    on
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {diet.replace("-", " ")}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <Label>Tags</Label>
+          <p className="text-xs text-muted-foreground">
+            One-word descriptors like &quot;weeknight&quot; or
+            &quot;make-ahead&quot;. Press Enter to add.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {watchedTags.map((t) => (
+              <Badge key={t} variant="secondary" className="gap-1 lowercase">
+                #{t}
+                <button
+                  type="button"
+                  onClick={() => removeTag(t)}
+                  className="ml-0.5 rounded hover:bg-foreground/10"
+                  aria-label={`Remove tag ${t}`}
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ))}
+            <Input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === ",") {
+                  e.preventDefault();
+                  addTag();
+                }
+              }}
+              onBlur={addTag}
+              placeholder="add tag..."
+              className="h-7 w-32 text-xs"
+              autoComplete="off"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-display text-lg font-semibold">Visibility</h2>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {VISIBILITY.map((v) => (
+            <label
+              key={v}
+              className={cn(
+                "flex cursor-pointer items-start gap-2 rounded-xl border p-3 text-sm transition",
+                watchedVisibility === v
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-muted/50",
+              )}
+            >
+              <input
+                type="radio"
+                value={v}
+                {...form.register("visibility")}
+                className="sr-only"
+              />
+              <span className="mt-0.5">
+                {v === "public" && <Globe className="size-4 text-primary" />}
+                {v === "unlisted" && <EyeOff className="size-4 text-muted-foreground" />}
+                {v === "private" && <Lock className="size-4 text-muted-foreground" />}
+              </span>
+              <span>
+                <span className="block font-medium capitalize">{v}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {v === "public" && "Shows in the feed and on your profile."}
+                  {v === "unlisted" && "Only people with the link."}
+                  {v === "private" && "Just you."}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      {submitError && (
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {submitError}
+        </p>
+      )}
+
+      <div className="sticky bottom-20 z-10 -mx-4 flex justify-end gap-2 border-t border-border bg-background/85 px-4 py-3 backdrop-blur sm:bottom-0 sm:-mx-6 sm:px-6">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={isPending}
+          className="gap-1.5 min-w-32"
+        >
+          {isPending && <Loader2 className="size-4 animate-spin" />}
+          {isPending ? "Saving..." : "Save recipe"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <Label>{label}</Label>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <div className="mt-1.5">{children}</div>
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function numericFieldSetter(value: unknown): number | null {
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}

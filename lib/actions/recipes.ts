@@ -1,0 +1,266 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { eq, and, sql } from "drizzle-orm";
+import { ZodError } from "zod";
+
+import { db } from "@/db/client";
+import {
+  recipes,
+  recipePhotos,
+  recipeIngredients,
+  recipeSteps,
+  tags,
+  recipeTags,
+} from "@/db/schema";
+import { auth } from "@/lib/auth";
+import { recipeFormSchema, slugify } from "@/lib/validators";
+
+type State = { error?: string; fieldErrors?: Record<string, string[]> };
+
+export async function createRecipeAction(
+  _prev: State,
+  formData: FormData,
+): Promise<State> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { error: "You must be signed in." };
+  }
+  const userId = session.user.id;
+  const handle = session.user.handle;
+
+  const json = formData.get("payload");
+  if (typeof json !== "string") {
+    return { error: "Missing form payload." };
+  }
+
+  let parsed;
+  try {
+    parsed = recipeFormSchema.parse(JSON.parse(json));
+  } catch (err) {
+    if (err instanceof ZodError) {
+      const flat = err.flatten();
+      return {
+        error: "Some fields need attention.",
+        fieldErrors: flat.fieldErrors as Record<string, string[]>,
+      };
+    }
+    return { error: "Invalid form data." };
+  }
+
+  const baseSlug = slugify(parsed.title) || "recipe";
+  const slug = await uniqueSlugFor(userId, baseSlug);
+
+  const recipeId = crypto.randomUUID();
+  const now = new Date();
+
+  db.transaction((tx) => {
+    tx.insert(recipes)
+      .values({
+        id: recipeId,
+        authorId: userId,
+        title: parsed.title.trim(),
+        slug,
+        description: parsed.description ?? null,
+        prepMinutes: parsed.prepMinutes ?? null,
+        cookMinutes: parsed.cookMinutes ?? null,
+        servings: parsed.servings ?? null,
+        mealType: parsed.mealType ?? null,
+        cuisine: parsed.cuisine ?? null,
+        diets: parsed.diets ?? [],
+        visibility: parsed.visibility,
+        kind: parsed.kind,
+        sourceUrl: parsed.sourceUrl ?? null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+
+    if (parsed.ingredients.length) {
+      tx.insert(recipeIngredients)
+        .values(
+          parsed.ingredients.map((ing, i) => ({
+            recipeId,
+            position: i,
+            quantity: ing.quantity ?? null,
+            unit: ing.unit ?? null,
+            name: ing.name,
+            note: ing.note ?? null,
+          })),
+        )
+        .run();
+    }
+
+    if (parsed.steps.length) {
+      tx.insert(recipeSteps)
+        .values(
+          parsed.steps.map((s, i) => ({
+            recipeId,
+            position: i,
+            body: s.body,
+          })),
+        )
+        .run();
+    }
+
+    if (parsed.photoIds.length) {
+      const photos = collectPhotos(parsed.photoIds);
+      if (photos.length) {
+        tx.insert(recipePhotos)
+          .values(
+            photos.map((p, i) => ({
+              recipeId,
+              position: i,
+              path: p.path,
+              width: p.width ?? null,
+              height: p.height ?? null,
+              blurhash: p.placeholder ?? null,
+              createdAt: now,
+            })),
+          )
+          .run();
+      }
+    }
+
+    if (parsed.tags.length) {
+      const cleanTagNames = Array.from(
+        new Set(parsed.tags.map((t) => t.trim().toLowerCase()).filter(Boolean)),
+      );
+      for (const name of cleanTagNames) {
+        const existing = tx
+          .select({ id: tags.id })
+          .from(tags)
+          .where(eq(tags.name, name))
+          .get();
+        const tagId = existing?.id ?? crypto.randomUUID();
+        if (!existing) {
+          tx.insert(tags).values({ id: tagId, name }).run();
+        }
+        tx.insert(recipeTags)
+          .values({ recipeId, tagId })
+          .onConflictDoNothing()
+          .run();
+      }
+    }
+  });
+
+  revalidatePath("/feed");
+  if (handle) revalidatePath(`/u/${handle}`);
+  redirect(`/r/${recipeId}`);
+}
+
+/**
+ * Photo metadata is passed via the form payload; the actual files are
+ * already on disk (uploaded via /api/upload which also writes the
+ * `path` returned to the client). Here we read those PhotoIds out and
+ * resolve them to the public path on disk.
+ *
+ * For now, the client passes back the full upload result (including
+ * publicPath). The form payload stores `photoIds` as the FILE PUBLIC
+ * PATHS (e.g. "/uploads/abc.jpg") not opaque ids. That's fine — Path
+ * is what's stored in `recipePhotos.path` anyway. The "id" naming is
+ * historical from the planning phase.
+ *
+ * If we ever need to revalidate or re-derive metadata from the path,
+ * `lib/storage.ts#read(id)` is available.
+ */
+function collectPhotos(photoIds: string[]): Array<{
+  path: string;
+  width?: number | null;
+  height?: number | null;
+  placeholder?: string | null;
+}> {
+  return photoIds
+    .filter(Boolean)
+    .map((p) => ({ path: p }));
+}
+
+async function uniqueSlugFor(authorId: string, base: string): Promise<string> {
+  let candidate = base;
+  for (let i = 1; i <= 50; i += 1) {
+    const existing = db
+      .select({ id: recipes.id })
+      .from(recipes)
+      .where(and(eq(recipes.authorId, authorId), eq(recipes.slug, candidate)))
+      .get();
+    if (!existing) return candidate;
+    candidate = `${base}-${i}`;
+  }
+  return `${base}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export async function deleteRecipeAction(recipeId: string): Promise<void> {
+  const session = await auth();
+  if (!session?.user?.id) throw new Error("UNAUTHENTICATED");
+
+  const owned = db
+    .select({ authorId: recipes.authorId })
+    .from(recipes)
+    .where(eq(recipes.id, recipeId))
+    .get();
+  if (!owned) return;
+  if (owned.authorId !== session.user.id) throw new Error("FORBIDDEN");
+
+  db.delete(recipes).where(eq(recipes.id, recipeId)).run();
+  revalidatePath("/feed");
+  if (session.user.handle) revalidatePath(`/u/${session.user.handle}`);
+}
+
+// Light read helpers used by detail / profile pages.
+
+export type RecipeDetail = NonNullable<Awaited<ReturnType<typeof getRecipe>>>;
+
+export async function getRecipe(id: string) {
+  const recipe = db
+    .select()
+    .from(recipes)
+    .where(eq(recipes.id, id))
+    .get();
+  if (!recipe) return null;
+
+  const photos = db
+    .select()
+    .from(recipePhotos)
+    .where(eq(recipePhotos.recipeId, id))
+    .orderBy(recipePhotos.position)
+    .all();
+
+  const ingredients = db
+    .select()
+    .from(recipeIngredients)
+    .where(eq(recipeIngredients.recipeId, id))
+    .orderBy(recipeIngredients.position)
+    .all();
+
+  const steps = db
+    .select()
+    .from(recipeSteps)
+    .where(eq(recipeSteps.recipeId, id))
+    .orderBy(recipeSteps.position)
+    .all();
+
+  const recipeTagRows = db
+    .select({ name: tags.name })
+    .from(recipeTags)
+    .innerJoin(tags, eq(recipeTags.tagId, tags.id))
+    .where(eq(recipeTags.recipeId, id))
+    .all();
+
+  return {
+    recipe,
+    photos,
+    ingredients,
+    steps,
+    tagNames: recipeTagRows.map((t) => t.name),
+  };
+}
+
+export async function getRecipeCount(authorId: string): Promise<number> {
+  const row = db
+    .select({ n: sql<number>`COUNT(*)` })
+    .from(recipes)
+    .where(eq(recipes.authorId, authorId))
+    .get();
+  return row?.n ?? 0;
+}

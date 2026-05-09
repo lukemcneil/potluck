@@ -58,22 +58,26 @@
 
 ## Phase 5 — Recipe create flow (mobile-first)
 
-- [ ] `app/(app)/add/page.tsx` — entry: choose **Take photos** | **Pick from library** | **Paste URL**
-- [ ] `components/upload/PhotoPicker.tsx` — `<input capture="environment" multiple>` + drag-drop on desktop, reorder, delete
-- [ ] On submit: upload images → return URLs → choose **Extract recipe** (default) or **Just save photos**
-- [ ] If extract: progress UI → call `/api/extract` → show editable form pre-filled
-- [ ] `components/recipe/RecipeForm.tsx` — RHF + Zod, all fields, live ingredient/step add/remove/reorder
-- [ ] Server action `createRecipe` (with auth + author binding) + redirect to `/r/[id]`
-- [ ] Failure mode: "couldn't parse — fill in manually?" with photos preserved
+- [x] `app/(app)/add/page.tsx` — uses `<AddRecipeFlow>` orchestrator
+- [x] Choose-source tile: Photos / URL / Type it in / Photos only
+- [x] `components/upload/PhotoPicker.tsx` — native camera capture, multi-file, drag-drop, reorder, delete, /api/upload integration
+- [x] On photos: choose **Extract recipe** (calls /api/extract) or **Just save photos**
+- [x] On URL: paste link, hits same /api/extract endpoint
+- [x] Extraction progress UI with friendly copy
+- [x] `components/recipe/RecipeForm.tsx` — RHF + Zod, ingredients/steps add/remove with useFieldArray, taxonomy selectors, diet chips, tag input, visibility radio cards, sticky save bar
+- [x] Server action `createRecipeAction` (auth-gated, slug uniqueness, transactional insert across recipes/photos/ingredients/steps/tags)
+- [x] Failure mode: extract error keeps user on the photos/URL stage with photos preserved + error message; can also bypass extraction with "Type it in"
 
 ## Phase 6 — Recipe view + cook mode
 
-- [ ] `app/(app)/r/[id]/page.tsx` — hero photo carousel, ingredients, numbered steps, time/servings badges
+- [x] `app/(app)/r/[id]/page.tsx` — hero photo, ingredients, numbered steps, time/servings/visibility badges, author link
+- [ ] Hero photo CAROUSEL (currently shows first photo + "+N more" badge)
 - [ ] `components/recipe/ServingsScaler.tsx` — slider that recomputes ingredient quantities (handles fractions)
 - [ ] `app/(app)/r/[id]/cook/page.tsx` — cook mode (large text, dim chrome, **screen-wake-lock**)
 - [ ] Print view (`@media print` styles)
 - [ ] `app/(app)/r/[id]/edit/page.tsx` — author-only edit
-- [ ] Server actions: `updateRecipe`, `deleteRecipe`
+- [ ] Server action: `updateRecipe`
+- [x] Server action: `deleteRecipeAction`
 
 ## Phase 7 — Profile + collections
 

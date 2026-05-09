@@ -32,8 +32,8 @@ export const recipeFormSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(160),
   description: z.string().trim().max(2000).optional().nullable(),
 
-  prepMinutes: z.coerce.number().int().min(0).max(60 * 24).optional().nullable(),
-  cookMinutes: z.coerce.number().int().min(0).max(60 * 24).optional().nullable(),
+  prepMinutes: z.number().int().min(0).max(60 * 24).nullable().optional(),
+  cookMinutes: z.number().int().min(0).max(60 * 24).nullable().optional(),
   servings: z.string().trim().max(40).optional().nullable(),
 
   mealType: z.enum(MEAL_TYPES).optional().nullable(),
@@ -51,7 +51,8 @@ export const recipeFormSchema = z.object({
 
   photoIds: z.array(z.string()).default([]),
 });
-export type RecipeFormInput = z.infer<typeof recipeFormSchema>;
+export type RecipeFormInput = z.input<typeof recipeFormSchema>;
+export type RecipeFormOutput = z.output<typeof recipeFormSchema>;
 
 export const extractedRecipeSchema = z.object({
   title: z.string().trim().min(1).max(160),

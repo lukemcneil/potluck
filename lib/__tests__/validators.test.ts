@@ -26,11 +26,11 @@ describe("recipeFormSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("coerces numeric prep / cook minutes from strings", () => {
+  it("accepts numeric prep / cook minutes", () => {
     const r = recipeFormSchema.parse({
       title: "Soup",
-      prepMinutes: "10",
-      cookMinutes: "30",
+      prepMinutes: 10,
+      cookMinutes: 30,
     });
     expect(r.prepMinutes).toBe(10);
     expect(r.cookMinutes).toBe(30);
