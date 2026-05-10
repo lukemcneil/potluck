@@ -44,11 +44,23 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  nativeButton,
+  render,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // When a caller passes a `render` slot they are intentionally swapping
+  // the underlying element (e.g. `render={<Link/>}` for navigation
+  // buttons). Base UI defaults `nativeButton` to true and logs a warning
+  // when the rendered element isn't a `<button>`, which spams every
+  // Button-as-Link in the app. Default to `nativeButton={false}` for
+  // those cases unless the caller explicitly overrides it.
+  const resolvedNativeButton =
+    nativeButton ?? (render ? false : undefined)
   return (
     <ButtonPrimitive
       data-slot="button"
+      nativeButton={resolvedNativeButton}
+      render={render}
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
