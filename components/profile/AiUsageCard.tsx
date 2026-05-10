@@ -35,7 +35,7 @@ export function AiUsageCard({ spend, capUsd }: Props) {
           {formatUsd(spend.totalUsd)}
         </span>
         <span className="text-xs text-muted-foreground">
-          {spend.totalCalls} extraction{spend.totalCalls === 1 ? "" : "s"}
+          {`${spend.totalCalls} extraction${spend.totalCalls === 1 ? "" : "s"}`}
           {capUsd != null ? ` of ${formatUsd(capUsd)} cap` : ""}
         </span>
       </div>
@@ -55,8 +55,7 @@ export function AiUsageCard({ spend, capUsd }: Props) {
             <li key={m.model} className="flex justify-between gap-2">
               <span className="font-mono">{m.model}</span>
               <span className="tabular-nums">
-                {formatUsd(m.costUsd)} · {m.calls}{" "}
-                call{m.calls === 1 ? "" : "s"}
+                {`${formatUsd(m.costUsd)} · ${m.calls} call${m.calls === 1 ? "" : "s"}`}
               </span>
             </li>
           ))}

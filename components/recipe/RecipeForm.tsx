@@ -461,7 +461,25 @@ export function RecipeForm(props: Props) {
         </p>
       )}
 
-      <div className="sticky bottom-20 z-10 -mx-4 flex justify-end gap-2 border-t border-border bg-background/85 px-4 py-3 backdrop-blur sm:bottom-0 sm:-mx-6 sm:px-6">
+      {/*
+        Sticky save bar.
+
+        On mobile we sit `bottom-20` to clear the BottomTabBar (which is
+        ~64px tall plus its lifted +Add pill). On desktop we collapse to
+        the bottom of the viewport.
+
+        The bar uses a fully-opaque background plus a small fade-mask
+        above so form content scrolling under it appears to dissolve
+        instead of being half-readable behind a translucent strip.
+      */}
+      <div
+        className={cn(
+          "sticky bottom-20 z-10 -mx-4 flex justify-end gap-2 bg-background px-4 py-3",
+          "shadow-[0_-12px_24px_-16px_rgb(0_0_0/0.18)]",
+          "before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t before:from-background before:to-transparent",
+          "sm:bottom-0 sm:-mx-6 sm:px-6",
+        )}
+      >
         <Button
           type="submit"
           size="lg"
