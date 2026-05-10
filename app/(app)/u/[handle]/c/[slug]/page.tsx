@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
@@ -10,6 +11,25 @@ import { getCollectionByHandleSlug } from "@/lib/queries/collections";
 import { CollectionMenu } from "@/components/collection/CollectionMenu";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ handle: string; slug: string }>;
+}): Promise<Metadata> {
+  const { handle, slug } = await params;
+  const session = await auth();
+  const data = await getCollectionByHandleSlug(
+    handle,
+    slug,
+    session?.user?.id ?? null,
+  );
+  if (!data) return { title: "Collection not found" };
+  return {
+    title: `${data.collection.name} · @${handle}`,
+    description: data.collection.description?.trim() || undefined,
+  };
+}
 
 export default async function CollectionDetailPage({
   params,

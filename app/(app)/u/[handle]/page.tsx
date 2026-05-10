@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { ChefHat, Folder } from "lucide-react";
@@ -9,11 +10,33 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { auth } from "@/lib/auth";
 import { listRecipeCards } from "@/lib/queries/recipes";
 import { listCollectionsForUser } from "@/lib/queries/collections";
+import { monthlySpendForUser } from "@/lib/queries/ai-usage";
 import { RecipeCard } from "@/components/recipe/RecipeCard";
 import { CollectionCard } from "@/components/collection/CollectionCard";
 import { CreateCollectionDialog } from "@/components/collection/CreateCollectionDialog";
+import { ProfileEditDialog } from "@/components/profile/ProfileEditDialog";
+import { AiUsageCard } from "@/components/profile/AiUsageCard";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ handle: string }>;
+}): Promise<Metadata> {
+  const { handle } = await params;
+  const profile = db
+    .select({ name: users.name, handle: users.handle, bio: users.bio })
+    .from(users)
+    .where(eq(users.handle, handle))
+    .get();
+  if (!profile) return { title: "Profile not found" };
+  const display = profile.name?.trim() || `@${profile.handle ?? handle}`;
+  return {
+    title: display,
+    description: profile.bio?.trim() || undefined,
+  };
+}
 
 export default async function ProfilePage({
   params,
@@ -32,14 +55,22 @@ export default async function ProfilePage({
   const session = await auth();
   const isOwnProfile = session?.user?.id === profile.id;
 
-  const [recipes, collections] = await Promise.all([
+  const [recipes, collections, aiSpend] = await Promise.all([
     listRecipeCards({
       authorId: profile.id,
       publicOnly: !isOwnProfile,
       limit: 48,
     }),
     listCollectionsForUser(profile.id, { publicOnly: !isOwnProfile }),
+    isOwnProfile ? monthlySpendForUser(profile.id) : Promise.resolve(null),
   ]);
+
+  const aiCapEnv = process.env.POTLUCK_USER_MONTHLY_USD_CAP;
+  const aiCapUsd = (() => {
+    if (!aiCapEnv) return null;
+    const n = Number(aiCapEnv);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
 
   // Hide the All Saves collection from non-owners (it's always private anyway,
   // but defensively filter the list).
@@ -49,14 +80,14 @@ export default async function ProfilePage({
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
-      <header className="flex items-center gap-4">
+      <header className="flex items-start gap-4">
         <Avatar className="size-16">
           <AvatarImage src={profile.image ?? undefined} alt="" />
           <AvatarFallback className="text-xl">
             {(profile.name ?? profile.handle ?? "?").charAt(0).toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="font-display text-2xl font-semibold tracking-tight">
             {profile.name ?? profile.handle}
           </h1>
@@ -65,7 +96,22 @@ export default async function ProfilePage({
             <p className="mt-1 max-w-prose text-sm">{profile.bio}</p>
           )}
         </div>
+        {isOwnProfile && profile.handle && (
+          <ProfileEditDialog
+            initial={{
+              name: profile.name ?? "",
+              handle: profile.handle,
+              bio: profile.bio ?? null,
+            }}
+          />
+        )}
       </header>
+
+      {isOwnProfile && aiSpend && (
+        <div className="mt-6 max-w-md">
+          <AiUsageCard spend={aiSpend} capUsd={aiCapUsd} />
+        </div>
+      )}
 
       <Tabs defaultValue="recipes" className="mt-8">
         <TabsList>

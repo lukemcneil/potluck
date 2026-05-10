@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
@@ -30,6 +31,21 @@ import { PrintButton } from "@/components/recipe/PrintButton";
 import { RecipeBody } from "@/components/recipe/RecipeBody";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}): Promise<Metadata> {
+  const { id } = await params;
+  const data = await getRecipe(id);
+  if (!data) return { title: "Recipe not found" };
+  const desc = data.recipe.description?.trim();
+  return {
+    title: data.recipe.title,
+    description: desc && desc.length > 0 ? desc : undefined,
+  };
+}
 
 export default async function RecipePage({
   params,

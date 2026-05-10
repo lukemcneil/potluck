@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Bookmark, ChefHat, Plus } from "lucide-react";
 
@@ -9,6 +10,11 @@ import { requireSession } from "@/lib/session";
 import { listCollectionsForUser, getCollectionByHandleSlug } from "@/lib/queries/collections";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Cookbook",
+  description: "Your saved recipes and collections.",
+};
 
 export default async function CookbookPage() {
   const session = await requireSession("/cookbook");

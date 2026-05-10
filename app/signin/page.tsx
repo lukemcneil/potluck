@@ -1,8 +1,13 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth, signIn } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { ChefHat } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Sign in",
+};
 
 type SearchParams = Promise<{ callbackUrl?: string }>;
 

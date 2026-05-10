@@ -1,15 +1,65 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Search as SearchIcon, Users, ChefHat } from "lucide-react";
 
 import { searchUsers } from "@/lib/queries/users";
-import { searchRecipes, listRecipeCards } from "@/lib/queries/recipes";
+import {
+  searchRecipes,
+  listRecipeCards,
+  listAvailableCuisines,
+} from "@/lib/queries/recipes";
 import { UserCard } from "@/components/user/UserCard";
 import { RecipeCard } from "@/components/recipe/RecipeCard";
 import { SearchBox } from "@/components/search/SearchBox";
+import { FilterChips } from "@/components/filter/FilterChips";
+import { MEAL_TYPES, type MealType } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
 type SP = Record<string, string | string[] | undefined>;
+
+function pick(sp: SP, key: string): string | undefined {
+  const v = sp[key];
+  if (v == null) return undefined;
+  return Array.isArray(v) ? v[0] : v;
+}
+
+function parseRecipeFilters(sp: SP) {
+  const meal = pick(sp, "meal");
+  const cuisine = pick(sp, "cuisine");
+  const dietParam = pick(sp, "diet");
+  const maxParam = pick(sp, "max");
+  const mealType = (MEAL_TYPES as readonly string[]).includes(meal ?? "")
+    ? (meal as MealType)
+    : undefined;
+  const diets = dietParam
+    ? dietParam
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter(Boolean)
+    : undefined;
+  const max = Number(maxParam);
+  const maxMinutes = Number.isFinite(max) && max > 0 ? max : undefined;
+  return {
+    mealType,
+    cuisine: cuisine?.trim() || undefined,
+    diets,
+    maxMinutes,
+  };
+}
+
+export async function generateMetadata({
+  searchParams,
+}: {
+  searchParams: Promise<SP>;
+}): Promise<Metadata> {
+  const sp = await searchParams;
+  const q = (pick(sp, "q") ?? "").trim();
+  return {
+    title: q ? `Search: ${q}` : "Search",
+    description: "Find recipes and cooks across Potluck.",
+  };
+}
 
 export default async function SearchPage({
   searchParams,
@@ -17,15 +67,28 @@ export default async function SearchPage({
   searchParams: Promise<SP>;
 }) {
   const sp = await searchParams;
-  const rawQ = sp.q;
-  const q = (Array.isArray(rawQ) ? rawQ[0] : rawQ ?? "").trim();
+  const q = (pick(sp, "q") ?? "").trim();
+  const filters = parseRecipeFilters(sp);
+  const hasFilters = !!(
+    filters.mealType ||
+    filters.cuisine ||
+    (filters.diets && filters.diets.length) ||
+    filters.maxMinutes
+  );
 
   const isEmpty = q.length === 0;
 
-  const [people, recipeResults, browseRecipes] = await Promise.all([
+  const [people, recipeResults, browseRecipes, cuisines] = await Promise.all([
     searchUsers(q, { limit: isEmpty ? 24 : 12 }),
-    isEmpty ? Promise.resolve([]) : searchRecipes(q, { limit: 48 }),
-    isEmpty ? listRecipeCards({ publicOnly: true, limit: 12 }) : Promise.resolve([]),
+    isEmpty
+      ? hasFilters
+        ? listRecipeCards({ publicOnly: true, limit: 48, ...filters })
+        : Promise.resolve([])
+      : searchRecipes(q, { limit: 48, ...filters }),
+    isEmpty && !hasFilters
+      ? listRecipeCards({ publicOnly: true, limit: 12 })
+      : Promise.resolve([]),
+    listAvailableCuisines(),
   ]);
 
   return (
@@ -41,10 +104,19 @@ export default async function SearchPage({
         <SearchBox initialValue={q} placeholder="Search cooks and recipes..." />
       </div>
 
-      {isEmpty ? (
+      <div className="-mx-4 mt-4 overflow-x-auto px-4 sm:mx-0 sm:overflow-visible sm:px-0">
+        <FilterChips cuisines={cuisines} className="flex-nowrap sm:flex-wrap" />
+      </div>
+
+      {isEmpty && !hasFilters ? (
         <BrowseEmptyState people={people} recipes={browseRecipes} />
       ) : (
-        <SearchResults q={q} people={people} recipes={recipeResults} />
+        <SearchResults
+          q={q}
+          people={people}
+          recipes={recipeResults}
+          hasFilters={hasFilters}
+        />
       )}
     </div>
   );
@@ -54,26 +126,31 @@ function SearchResults({
   q,
   people,
   recipes,
+  hasFilters,
 }: {
   q: string;
   people: Awaited<ReturnType<typeof searchUsers>>;
   recipes: Awaited<ReturnType<typeof searchRecipes>>;
+  hasFilters: boolean;
 }) {
   const totalHits = people.length + recipes.length;
 
   if (totalHits === 0) {
+    const headline = q
+      ? `No results for \u201C${q}\u201D`
+      : "No recipes match these filters";
+    const sub = q
+      ? "Try a different name, ingredient, or cuisine."
+      : "Try clearing a filter or two.";
     return (
       <div className="mt-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
         <SearchIcon className="size-9 text-muted-foreground" />
-        <h2 className="mt-3 font-display text-lg font-semibold">
-          No results for &ldquo;{q}&rdquo;
-        </h2>
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">
-          Try a different name, ingredient, or cuisine.
-        </p>
+        <h2 className="mt-3 font-display text-lg font-semibold">{headline}</h2>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">{sub}</p>
       </div>
     );
   }
+  void hasFilters;
 
   return (
     <>
