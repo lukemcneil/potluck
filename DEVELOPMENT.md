@@ -128,6 +128,13 @@ AUTH_GOOGLE_SECRET="..."
 # OpenAI (for recipe extraction)
 OPENAI_API_KEY="sk-..."
 
+# Optional — override the model for /api/extract (defaults to gpt-4o)
+OPENAI_MODEL="gpt-4o-mini"
+
+# Optional — per-user monthly USD cap on /api/extract spend.
+# Unset / non-positive = no cap. Enforced from the aiUsage ledger.
+POTLUCK_USER_MONTHLY_USD_CAP="1.00"
+
 # Optional — defaults to ./data
 POTLUCK_DATA_DIR="./data"
 ```
@@ -246,6 +253,73 @@ Notes:
 - A `failed-validation` error from OpenAI structured outputs costs the same as a successful call (we still get billed for the input + output tokens).
 
 ---
+
+## Editing recipes
+
+- **`updateRecipeAction(recipeId, _, formData)`** lives in `lib/actions/recipes.ts`. It validates with the same `recipeFormSchema` used at create time, asserts ownership, then runs a transaction that:
+  1. Updates the `recipes` row (slug is **not** regenerated — the URL stays stable).
+  2. Wholesale replaces `recipeIngredients`, `recipeSteps`, `recipePhotos`, and `recipeTags` for the recipe.
+  3. Inserts new tags as needed and links them.
+  Photo files on disk are left alone — orphan cleanup is a separate concern.
+- **`RecipeForm`** is dual-mode (`mode="create" | "edit"`). The edit page passes `mode="edit"` + `recipeId` and prefills `initial` / `initialPhotos`. The form chooses which server action to call internally.
+
+## Filtering
+
+- `components/filter/FilterChips.tsx` is the single source of truth for filter UI. It reads/writes URL search params with `useSearchParams` + `router.replace` (no scroll jump):
+  - `?meal=` (single, must be a known `MealType`)
+  - `?cuisine=` (single, lowercase compared via `LOWER(cuisine) = ?`)
+  - `?diet=a,b,c` (multi-select; matched with one `LIKE '%"X"%'` per diet against the JSON-encoded `recipes.diets` column)
+  - `?max=` (number; matched with `COALESCE(prepMinutes,0)+COALESCE(cookMinutes,0) <= ?`)
+- `lib/queries/recipes.ts#buildFilterConditions` translates the parsed `RecipeFeedFilters` into a Drizzle `SQL[]` and is shared by `listRecipeCards`, `searchRecipes`, and `countRecipes`.
+- The cuisine dropdown is populated from `listAvailableCuisines()` (distinct + non-empty cuisines on public recipes) so users only see options that actually return results.
+- Search applies filters **after** the FTS5 step. We over-fetch ids by 4× then re-filter to keep ranking intact, finally slicing to `limit/offset`.
+
+## Cook mode + servings scaling
+
+- `lib/cooking/scale.ts` (20 vitest assertions in `lib/__tests__/scale.test.ts`):
+  - `parseQuantity` handles integers, decimals, simple fractions (`3/4`), mixed numbers (`1 1/2`), unicode vulgar fractions (`½`, `1¼`, `⅔`, `⅛`–`⅞`), and ranges (`1-2`, `1 to 2`).
+  - `formatQuantity` snaps to nearest 1/8 with special cases for thirds — so `1.5 × (2/3) = 1`, not `0.99999`.
+  - `scaleQuantity(input, factor)` round-trips: parse → multiply → format. Unparseable strings (`"a pinch"`) are returned unchanged.
+- `components/recipe/IngredientsList.tsx` is a small client component that hosts the servings stepper on the recipe detail page; if `recipe.servings` doesn't parse to a single number it just renders the static list (no scaler).
+- `app/(app)/r/[id]/cook/page.tsx` + `components/recipe/CookMode.tsx` is the full-screen cooking view. It uses `screen.wakeLock.request("screen")` (best-effort, re-acquired on `visibilitychange`) so the device doesn't sleep mid-recipe. Layered at `z-50` so it sits above `AppBar` (z-30) and `BottomTabBar` (z-40) without needing a separate route group.
+
+## Photo carousel
+
+- `components/recipe/PhotoCarousel.tsx` is a CSS scroll-snap horizontal scroller with hidden scrollbar, dot indicators, desktop arrow buttons, and an `IntersectionObserver` to track the active slide. Single-photo input falls back to a plain `<Image>`. The first slide gets `priority` so LCP isn't regressed.
+
+## Loading + error boundaries
+
+Every (app) route has a `loading.tsx` skeleton tuned to match its real layout. Two reusable building blocks live in `components/recipe/RecipeCardSkeleton.tsx` and `components/collection/CollectionCardSkeleton.tsx` — both export `*Skeleton` and `*SkeletonGrid` variants.
+
+The app shell catches uncaught render errors at `app/(app)/error.tsx` (with a "Try again" button bound to `reset()`) and unmatched routes at `app/(app)/not-found.tsx`. Both stay inside the AppBar / BottomTabBar shell so navigation still works after a page-level failure.
+
+## Print
+
+Recipe pages print as a clean single-column card. The styling is in `app/globals.css` under `@media print` and depends on a few data-attributes:
+
+- `data-app-bar` on the top app bar header
+- `data-bottom-tab-bar` on the mobile tab bar nav
+- `data-recipe-detail` on the recipe `<article>`
+- `data-print="hide"` on anything we want stripped (the action button row)
+
+The "Print" button on `/r/[id]` is a tiny client-only `<PrintButton>` that calls `window.print()`. There's no PDF export — browsers handle "Save as PDF" out of the box.
+
+## Profile editor
+
+- `lib/actions/profile.ts#updateProfileAction` validates name / handle / bio with a Zod schema, checks for handle conflicts (case-insensitive thanks to the `handleSchema` enforcing lowercase), updates the row, and revalidates both the old and new `/u/<handle>` paths so the profile card refreshes after a handle change.
+- `components/profile/ProfileEditDialog.tsx` is a controlled dialog that renders only for the profile owner. On a successful handle change it `router.replace`s to the new URL.
+- The Google avatar (`users.image`) is intentionally not user-editable — it stays in sync with whatever the OAuth provider returns.
+
+## AI usage ledger + spend cap
+
+- `db/schema.ts#aiUsage` is a small append-only table (`userId`, `recipeId?`, `model`, `inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `createdAt`) with a `(userId, createdAt)` index for fast MTD queries. Migration: `db/migrations/0002_cooing_sentry.sql`.
+- `lib/queries/ai-usage.ts` exposes:
+  - `monthlySpendForUser(userId)` — UTC-month-anchored aggregate, broken down by model.
+  - `recordAiUsage({...})` — best-effort insert; failures are logged but never thrown so usage persistence can't break a successful extraction.
+  - `recentUsageForUser(userId, limit)` — recent rows, used by future admin views.
+- `app/api/extract/route.ts` checks `monthlySpendForUser` against `POTLUCK_USER_MONTHLY_USD_CAP` (env-configurable, optional). If the cap is hit it returns 402 with a friendly message; the AddRecipeFlow surfaces the error verbatim. On success it calls `recordAiUsage` before returning the response.
+- `components/profile/AiUsageCard.tsx` shows the user their MTD spend on the owner's `/u/[handle]` (only when `isOwnProfile && spend.totalCalls > 0`). When a cap is set, a progress bar shows their burn-down.
+- `components/upload/AddRecipeFlow.tsx` shows the per-extraction cost as a small pill on the review step ("AI extraction cost: 0.7¢ (gpt-4o, 1,652 tokens)"). Sub-dollar costs render in cents for readability.
 
 ## Gotchas
 

@@ -10,6 +10,10 @@ const nextConfig: NextConfig = {
     "192.168.1.0/24",
     "10.0.0.0/8",
     "*.trycloudflare.com",
+    "*.ngrok-free.dev",
+    "*.ngrok-free.app",
+    "*.ngrok.app",
+    "*.ngrok.io",
   ],
 };
 

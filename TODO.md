@@ -71,12 +71,13 @@
 ## Phase 6 — Recipe view + cook mode
 
 - [x] `app/(app)/r/[id]/page.tsx` — hero photo, ingredients, numbered steps, time/servings/visibility badges, author link
-- [ ] Hero photo CAROUSEL (currently shows first photo + "+N more" badge)
-- [ ] `components/recipe/ServingsScaler.tsx` — slider that recomputes ingredient quantities (handles fractions)
-- [ ] `app/(app)/r/[id]/cook/page.tsx` — cook mode (large text, dim chrome, **screen-wake-lock**)
+- [x] Hero photo carousel (`components/recipe/PhotoCarousel.tsx` — scroll-snap, dot indicators, desktop arrows, single-photo fallback)
+- [x] `lib/cooking/scale.ts` — fraction-aware quantity parser + scaler (handles `1 1/2`, `3/4`, `0.5`, `½`, `1-2` ranges); 20 vitest assertions
+- [x] `components/recipe/IngredientsList.tsx` — servings stepper that rescales quantities live, snaps to eighths/thirds
+- [x] `app/(app)/r/[id]/cook/page.tsx` — full-screen cook mode (large text, ingredient checkboxes, step-by-step nav, screen wake lock, exits to recipe)
 - [ ] Print view (`@media print` styles)
-- [ ] `app/(app)/r/[id]/edit/page.tsx` — author-only edit
-- [ ] Server action: `updateRecipe`
+- [x] `app/(app)/r/[id]/edit/page.tsx` — author-only edit, prefilled `RecipeForm` (mode=edit), preserves slug/URL
+- [x] Server action: `updateRecipeAction` (transactional replace of ingredients/steps/photos/tags)
 - [x] Server action: `deleteRecipeAction`
 
 ## Phase 7 — Profile + collections
@@ -86,14 +87,14 @@
 - [x] `app/(app)/u/[handle]/c/[slug]/page.tsx` — collection detail (grid of recipes) with edit/delete menu for owner
 - [x] Server actions: `createCollection`, `updateCollection`, `deleteCollection`, `addRecipeToCollection`, `removeRecipeFromCollection`, `saveRecipe`, `unsaveRecipe`
 - [x] `components/recipe/SaveButton.tsx` — multi-select dialog with inline create-new collection (used on `/r/[id]` for non-author viewers)
-- [ ] Profile editor: change name, handle, avatar (small dialog)
+- [x] **Profile editor** (`components/profile/ProfileEditDialog.tsx` + `lib/actions/profile.ts#updateProfileAction`) — change name, handle (with uniqueness check), bio. Avatar is still pulled from Google.
 
 ## Phase 8 — Discover, search, save
 
-- [~] `app/(app)/feed/page.tsx` — public recipe feed (basic grid live; infinite scroll TBD)
-- [ ] `components/filter/FilterChips.tsx` — meal type, cuisine, diet, max time, tag chips on feed + search
-- [x] `app/(app)/search/page.tsx` — debounced query box, **People + Recipes** results, FTS5-backed recipe match (title/description/ingredients), LIKE-based user match (name/handle/bio); empty-query state shows "Cooks on Potluck" + latest recipes
-- [ ] Filters layered on top of search/feed (still TODO — `FilterChips.tsx` below)
+- [~] `app/(app)/feed/page.tsx` — public recipe feed (filter-aware grid live; infinite scroll TBD)
+- [x] `components/filter/FilterChips.tsx` — URL-driven meal-type / cuisine / diet (multi) / max-time chips, wired into both `/feed` and `/search`
+- [x] Cuisine filter populates from distinct values via `listAvailableCuisines()` so we never show empty options
+- [x] `app/(app)/search/page.tsx` — debounced query box, **People + Recipes** results, FTS5-backed recipe match (title/description/ingredients), LIKE-based user match (name/handle/bio); empty-query state shows "Cooks on Potluck" + latest recipes; filters narrow recipe results even with empty query
 - [x] Save action: `saveRecipeAction(recipeId, collectionIds?)` — auto-creates "All Saves" if missing
 - [x] `app/(app)/cookbook/page.tsx` — recently saved + collections grid
 
@@ -101,12 +102,12 @@
 
 - [ ] Service worker for app-shell caching + offline fallback
 - [ ] Install prompt UX (browser-native + iOS instructions sheet)
-- [ ] Loading states (`loading.tsx`) for every route
-- [ ] Empty states everywhere (no recipes, no saves, no collections)
-- [ ] `error.tsx` boundaries
+- [x] Loading states (`loading.tsx`) for every (app) route — feed, search, /r/[id], /r/[id]/edit, /r/[id]/cook, /cookbook, /u/[handle], /u/[handle]/c/[slug], /add, all using `RecipeCardSkeleton` / `CollectionCardSkeleton` primitives
+- [x] Empty states on the surfaces that need them (feed, /search no-match, /search filter no-match, profile, collection, /add review)
+- [x] `error.tsx` boundary at `(app)/error.tsx` with retry + "back to feed"; `(app)/not-found.tsx` for missing pages
 - [ ] Accessibility pass (focus management, aria labels, keyboard nav, color contrast)
 - [ ] Lighthouse mobile pass — perf > 90, a11y > 95
-- [ ] Vitest coverage on validators, server actions, scaler math
+- [~] Vitest coverage on validators (20+ assertions), scaler math (20 assertions); server actions still TBD
 
 ## Phase 9.5 — AI cost & observability
 
@@ -115,11 +116,12 @@
 - [x] `lib/ai/pricing.ts` — pricing table + `computeCost()`
 - [x] `extractRecipe()` returns `{ recipe, cost }` and logs a structured `[ai.extract]` line
 - [x] `/api/extract` includes cost in the JSON response body
-- [ ] Persist usage: a small `aiUsage` table (userId, recipeId?, model, tokens, costUsd, createdAt) written from the API route, so we can compute totals
-- [ ] Per-user spend cap (env-configurable, e.g. `POTLUCK_USER_MONTHLY_USD_CAP=1`) — block `/api/extract` and surface a friendly "you've hit your cap, please try again next month" toast
-- [ ] Surface "this extraction cost X¢" in the AddRecipeFlow review step (transparency, low priority)
-- [ ] Admin/`/me` widget: total spend MTD + breakdown by model (only visible to the signed-in user for their own usage)
+- [x] Persist usage: `aiUsage` table (`userId`, `recipeId?`, `model`, `inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `createdAt`) written from the API route on success
+- [x] Per-user monthly spend cap (`POTLUCK_USER_MONTHLY_USD_CAP`, env-configurable) — `/api/extract` returns 402 with friendly copy when MTD spend ≥ cap
+- [x] Surface "this extraction cost X¢" in the AddRecipeFlow review step (chip below the heading; renders cents when sub-dollar)
+- [x] AI usage card on the owner's `/u/[handle]` — total spend MTD + breakdown by model + progress bar against the configured cap
 - [ ] Auto-fallback to `gpt-4o-mini` when the user is over a soft threshold (~⅔ of cap)
+- [ ] Show on AddRecipeFlow extracting screen if the user is approaching their cap
 
 ## Phase 10 — Docs + deploy
 
