@@ -5,6 +5,7 @@ import {
   formatQuantity,
   pluralizeUnit,
   scaleQuantity,
+  scaleStepText,
 } from "@/lib/cooking/scale";
 
 describe("parseQuantity", () => {
@@ -143,5 +144,48 @@ describe("pluralizeUnit", () => {
   it("returns the unit unchanged when quantity isn't a number", () => {
     expect(pluralizeUnit("cups", "a pinch")).toBe("cups");
     expect(pluralizeUnit("cups", null)).toBe("cups");
+  });
+});
+
+describe("scaleStepText", () => {
+  it("scales quantities with known units", () => {
+    expect(scaleStepText("Add 3 cups broth and simmer.", 0.5)).toBe(
+      "Add 1 1/2 cups broth and simmer.",
+    );
+    expect(scaleStepText("Add 2 cups broth.", 0.5)).toBe("Add 1 cup broth.");
+  });
+
+  it("handles fractions and mixed numbers", () => {
+    expect(scaleStepText("Whisk in 1/2 tsp salt.", 2)).toBe("Whisk in 1 tsp salt.");
+    expect(scaleStepText("Pour 1 1/2 cups milk.", 2)).toBe("Pour 3 cups milk.");
+  });
+
+  it("ignores temperatures and times", () => {
+    expect(scaleStepText("Bake at 350\u00B0F for 30 minutes.", 0.5)).toBe(
+      "Bake at 350\u00B0F for 30 minutes.",
+    );
+    expect(scaleStepText("Cook for 5 minutes, then rest 10.", 2)).toBe(
+      "Cook for 5 minutes, then rest 10.",
+    );
+  });
+
+  it("ignores raw counts with no unit", () => {
+    expect(scaleStepText("Add 3 eggs and stir.", 2)).toBe("Add 3 eggs and stir.");
+  });
+
+  it("returns input unchanged for factor 1 / bad factors", () => {
+    expect(scaleStepText("Add 2 cups broth.", 1)).toBe("Add 2 cups broth.");
+    expect(scaleStepText("Add 2 cups broth.", 0)).toBe("Add 2 cups broth.");
+    expect(scaleStepText("Add 2 cups broth.", -1)).toBe("Add 2 cups broth.");
+  });
+
+  it("handles tablespoons / teaspoons longer aliases", () => {
+    expect(scaleStepText("Stir in 2 tablespoons honey.", 0.5)).toBe(
+      "Stir in 1 tablespoon honey.",
+    );
+  });
+
+  it("handles unicode vulgar fractions", () => {
+    expect(scaleStepText("Add \u00BD cup oil.", 2)).toBe("Add 1 cup oil.");
   });
 });

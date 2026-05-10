@@ -1,8 +1,16 @@
 import Link from "next/link";
-import Image from "next/image";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { Clock, Users, ChefHat, Globe, Lock, EyeOff, Pencil } from "lucide-react";
+import {
+  Clock,
+  Users,
+  ChefHat,
+  Globe,
+  Lock,
+  EyeOff,
+  Pencil,
+  CookingPot,
+} from "lucide-react";
 
 import { db } from "@/db/client";
 import { users } from "@/db/schema";
@@ -17,6 +25,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SaveButton } from "@/components/recipe/SaveButton";
+import { PhotoCarousel } from "@/components/recipe/PhotoCarousel";
+import { PrintButton } from "@/components/recipe/PrintButton";
+import { RecipeBody } from "@/components/recipe/RecipeBody";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +58,6 @@ export default async function RecipePage({
   // Block private recipes from non-authors.
   if (recipe.visibility === "private" && !isAuthor) notFound();
 
-  const hero = photos[0];
   const totalMin =
     (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
 
@@ -63,27 +73,19 @@ export default async function RecipePage({
       : null;
 
   return (
-    <article className="mx-auto w-full max-w-3xl px-4 pt-4 pb-16 sm:px-6">
-      {hero && (
-        <div className="relative overflow-hidden rounded-2xl bg-muted">
-          <div className="relative aspect-4/3 w-full">
-            <Image
-              src={hero.path}
-              alt={recipe.title}
-              fill
-              sizes="(max-width: 768px) 100vw, 768px"
-              className="object-cover"
-              placeholder={hero.blurhash ? "blur" : undefined}
-              blurDataURL={hero.blurhash ?? undefined}
-              priority
-            />
-          </div>
-          {photos.length > 1 && (
-            <div className="absolute right-3 bottom-3 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-              +{photos.length - 1} more
-            </div>
-          )}
-        </div>
+    <article
+      data-recipe-detail
+      className="mx-auto w-full max-w-3xl px-4 pt-4 pb-16 sm:px-6"
+    >
+      {photos.length > 0 && (
+        <PhotoCarousel
+          alt={recipe.title}
+          photos={photos.map((p) => ({
+            id: p.id,
+            path: p.path,
+            blurhash: p.blurhash ?? null,
+          }))}
+        />
       )}
 
       <header className="mt-6">
@@ -145,7 +147,16 @@ export default async function RecipePage({
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2" data-print="hide">
+          {(ingredients.length > 0 || steps.length > 0) && (
+            <Link href={`/r/${recipe.id}/cook`}>
+              <Button size="sm" className="gap-1.5">
+                <CookingPot className="size-3.5" />
+                Cook
+              </Button>
+            </Link>
+          )}
+          <PrintButton />
           {isAuthor && (
             <Link href={`/r/${recipe.id}/edit`}>
               <Button size="sm" variant="outline" className="gap-1.5">
@@ -170,48 +181,17 @@ export default async function RecipePage({
         </div>
       </header>
 
-      {ingredients.length > 0 && (
-        <>
-          <Separator className="my-8" />
-          <section>
-            <h2 className="font-display text-xl font-semibold">Ingredients</h2>
-            <ul className="mt-3 space-y-2">
-              {ingredients.map((ing) => (
-                <li key={ing.id} className="flex gap-3 text-sm">
-                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/60" />
-                  <span>
-                    {[ing.quantity, ing.unit].filter(Boolean).join(" ")}
-                    {ing.quantity || ing.unit ? " " : ""}
-                    <span className="font-medium">{ing.name}</span>
-                    {ing.note && (
-                      <span className="text-muted-foreground">, {ing.note}</span>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </>
-      )}
-
-      {steps.length > 0 && (
-        <>
-          <Separator className="my-8" />
-          <section>
-            <h2 className="font-display text-xl font-semibold">Steps</h2>
-            <ol className="mt-3 space-y-4">
-              {steps.map((s, i) => (
-                <li key={s.id} className="flex gap-4">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                    {i + 1}
-                  </span>
-                  <p className="pt-0.5 text-sm leading-relaxed">{s.body}</p>
-                </li>
-              ))}
-            </ol>
-          </section>
-        </>
-      )}
+      <RecipeBody
+        ingredients={ingredients.map((ing) => ({
+          id: ing.id,
+          quantity: ing.quantity ?? null,
+          unit: ing.unit ?? null,
+          name: ing.name,
+          note: ing.note ?? null,
+        }))}
+        steps={steps.map((s) => ({ id: s.id, body: s.body }))}
+        servings={recipe.servings ?? null}
+      />
 
       {tagNames.length > 0 && (
         <>

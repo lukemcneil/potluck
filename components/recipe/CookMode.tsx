@@ -13,7 +13,12 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { parseQuantity, pluralizeUnit, scaleQuantity } from "@/lib/cooking/scale";
+import {
+  parseQuantity,
+  pluralizeUnit,
+  scaleQuantity,
+  scaleStepText,
+} from "@/lib/cooking/scale";
 import { cn } from "@/lib/utils";
 
 type Ingredient = {
@@ -119,6 +124,9 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
 
   const totalSteps = steps.length;
   const currentStep = steps[stepIndex];
+  const currentStepBody = currentStep
+    ? scaleStepText(currentStep.body, factor)
+    : "";
 
   const goPrev = () => setStepIndex((i) => Math.max(0, i - 1));
   const goNext = () => {
@@ -159,7 +167,7 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
       </header>
 
       <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
-        <aside className="shrink-0 overflow-y-auto border-b border-border md:w-80 md:border-r md:border-b-0">
+        <aside className="max-h-[40vh] shrink-0 overflow-y-auto border-b border-border md:max-h-none md:w-80 md:border-r md:border-b-0">
           <div className="px-4 py-4 sm:px-6">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -187,6 +195,8 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                     <li key={ing.id}>
                       <button
                         type="button"
+                        role="checkbox"
+                        aria-checked={checked}
                         onClick={() => toggleIngredient(ing.id)}
                         className={cn(
                           "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm transition",
@@ -245,7 +255,7 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                     Step {stepIndex + 1} of {totalSteps}
                   </p>
                   <p className="mt-4 font-display text-2xl leading-snug sm:text-3xl">
-                    {currentStep?.body}
+                    {currentStepBody}
                   </p>
 
                   {totalSteps > 1 && (

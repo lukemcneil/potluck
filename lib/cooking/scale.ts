@@ -217,55 +217,103 @@ type UnitForms = { singular: string; plural: string };
 // Map from any spelling we accept to its canonical singular + plural pair.
 // Entries deliberately cover the abbreviations that don't pluralize (tsp,
 // tbsp, oz, g, kg, ml, l) so they round-trip cleanly.
-const UNIT_FORMS: Map<string, UnitForms> = (() => {
-  const pairs: UnitForms[] = [
-    { singular: "cup", plural: "cups" },
-    { singular: "tsp", plural: "tsp" },
-    { singular: "teaspoon", plural: "teaspoons" },
-    { singular: "tbsp", plural: "tbsp" },
-    { singular: "tablespoon", plural: "tablespoons" },
-    { singular: "ounce", plural: "ounces" },
-    { singular: "oz", plural: "oz" },
-    { singular: "fl oz", plural: "fl oz" },
-    { singular: "pound", plural: "pounds" },
-    { singular: "lb", plural: "lbs" },
-    { singular: "gram", plural: "grams" },
-    { singular: "g", plural: "g" },
-    { singular: "kg", plural: "kg" },
-    { singular: "kilogram", plural: "kilograms" },
-    { singular: "ml", plural: "ml" },
-    { singular: "milliliter", plural: "milliliters" },
-    { singular: "millilitre", plural: "millilitres" },
-    { singular: "l", plural: "l" },
-    { singular: "liter", plural: "liters" },
-    { singular: "litre", plural: "litres" },
-    { singular: "pint", plural: "pints" },
-    { singular: "quart", plural: "quarts" },
-    { singular: "gallon", plural: "gallons" },
-    { singular: "stick", plural: "sticks" },
-    { singular: "slice", plural: "slices" },
-    { singular: "clove", plural: "cloves" },
-    { singular: "can", plural: "cans" },
-    { singular: "jar", plural: "jars" },
-    { singular: "bottle", plural: "bottles" },
-    { singular: "package", plural: "packages" },
-    { singular: "pkg", plural: "pkgs" },
-    { singular: "bunch", plural: "bunches" },
-    { singular: "head", plural: "heads" },
-    { singular: "sprig", plural: "sprigs" },
-    { singular: "leaf", plural: "leaves" },
-    { singular: "stalk", plural: "stalks" },
-    { singular: "ear", plural: "ears" },
-    { singular: "pinch", plural: "pinches" },
-    { singular: "dash", plural: "dashes" },
-    { singular: "drop", plural: "drops" },
-    { singular: "piece", plural: "pieces" },
-  ];
+const UNIT_PAIRS: readonly UnitForms[] = [
+  { singular: "cup", plural: "cups" },
+  { singular: "tsp", plural: "tsp" },
+  { singular: "teaspoon", plural: "teaspoons" },
+  { singular: "tbsp", plural: "tbsp" },
+  { singular: "tablespoon", plural: "tablespoons" },
+  { singular: "ounce", plural: "ounces" },
+  { singular: "oz", plural: "oz" },
+  { singular: "fl oz", plural: "fl oz" },
+  { singular: "pound", plural: "pounds" },
+  { singular: "lb", plural: "lbs" },
+  { singular: "gram", plural: "grams" },
+  { singular: "g", plural: "g" },
+  { singular: "kg", plural: "kg" },
+  { singular: "kilogram", plural: "kilograms" },
+  { singular: "ml", plural: "ml" },
+  { singular: "milliliter", plural: "milliliters" },
+  { singular: "millilitre", plural: "millilitres" },
+  { singular: "l", plural: "l" },
+  { singular: "liter", plural: "liters" },
+  { singular: "litre", plural: "litres" },
+  { singular: "pint", plural: "pints" },
+  { singular: "quart", plural: "quarts" },
+  { singular: "gallon", plural: "gallons" },
+  { singular: "stick", plural: "sticks" },
+  { singular: "slice", plural: "slices" },
+  { singular: "clove", plural: "cloves" },
+  { singular: "can", plural: "cans" },
+  { singular: "jar", plural: "jars" },
+  { singular: "bottle", plural: "bottles" },
+  { singular: "package", plural: "packages" },
+  { singular: "pkg", plural: "pkgs" },
+  { singular: "bunch", plural: "bunches" },
+  { singular: "head", plural: "heads" },
+  { singular: "sprig", plural: "sprigs" },
+  { singular: "leaf", plural: "leaves" },
+  { singular: "stalk", plural: "stalks" },
+  { singular: "ear", plural: "ears" },
+  { singular: "pinch", plural: "pinches" },
+  { singular: "dash", plural: "dashes" },
+  { singular: "drop", plural: "drops" },
+  { singular: "piece", plural: "pieces" },
+];
 
+const UNIT_FORMS: Map<string, UnitForms> = (() => {
   const map = new Map<string, UnitForms>();
-  for (const p of pairs) {
+  for (const p of UNIT_PAIRS) {
     map.set(p.singular.toLowerCase(), p);
     map.set(p.plural.toLowerCase(), p);
   }
   return map;
 })();
+
+// Pre-built once: longest unit aliases first so "tablespoons" wins over
+// "tbsp" when both could match.
+const UNIT_REGEX_FRAGMENT = (() => {
+  const seen = new Set<string>();
+  const aliases: string[] = [];
+  for (const p of UNIT_PAIRS) {
+    for (const a of [p.plural, p.singular]) {
+      if (!seen.has(a.toLowerCase())) {
+        seen.add(a.toLowerCase());
+        aliases.push(a);
+      }
+    }
+  }
+  aliases.sort((a, b) => b.length - a.length);
+  return aliases.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+})();
+
+// Match a quantity (mixed/fraction/decimal/vulgar fraction) followed by a
+// known cooking unit. Lookbehind on whitespace / start / open-bracket so
+// that vulgar fractions (which aren't word chars and so don't get a \b)
+// still anchor cleanly. Trailing \b ensures "min" doesn't match "minute"
+// inside "30 minutes" — only known units anchor the unit side.
+const QUANTITY_UNIT_RE = new RegExp(
+  String.raw`(?<=^|[\s([])(\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:\.\d+)?|[\u00BC-\u00BE\u2153-\u215E])\s+(` +
+    UNIT_REGEX_FRAGMENT +
+    String.raw`)\b`,
+  "gi",
+);
+
+/**
+ * Rescale "<quantity> <unit>" tokens embedded in free-form step text,
+ * leaving everything else (temperatures, times, prose) untouched.
+ *
+ * Examples (factor = 0.5):
+ *   "Add 3 cups broth and simmer 30 minutes" -> "Add 1 1/2 cups broth and simmer 30 minutes"
+ *   "Bake at 350\u00B0F for 20 min"          -> unchanged (no known unit)
+ */
+export function scaleStepText(body: string, factor: number): string {
+  if (!body) return body;
+  if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return body;
+  return body.replace(QUANTITY_UNIT_RE, (match, qty: string, unit: string) => {
+    const scaledQty = scaleQuantity(qty, factor);
+    if (scaledQty === qty.trim()) return match;
+    const scaledUnit = pluralizeUnit(unit, scaledQty);
+    return `${scaledQty} ${scaledUnit}`;
+  });
+}
