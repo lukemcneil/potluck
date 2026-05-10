@@ -43,7 +43,11 @@ const TABS: Tab[] = [
     href: "/me",
     label: "Profile",
     icon: User,
-    matches: (p) => p.startsWith("/me") || p.startsWith("/u/"),
+    // Match the profile root only, not nested resources like
+    // collection detail pages (/u/[handle]/c/[slug]) which are
+    // browsed from Cookbook context and shouldn't light up Profile.
+    matches: (p) =>
+      p === "/me" || /^\/u\/[^/]+\/?$/.test(p),
   },
 ];
 

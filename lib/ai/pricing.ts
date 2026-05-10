@@ -110,13 +110,26 @@ export function computeCost(modelId: string, usage: Usage): CostBreakdown {
   };
 }
 
+// Two formatters: one for "real money" amounts (>= $1) where 2
+// decimals is plenty, and one for sub-dollar AI-extraction costs
+// where we still want precision but not the 6-decimal noise that
+// reads as "$0.143138". 4 fraction digits keeps tenths-of-a-cent
+// resolution which is plenty for surfacing per-extraction spend.
 const dollarFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   minimumFractionDigits: 2,
-  maximumFractionDigits: 6,
+  maximumFractionDigits: 2,
+});
+const subDollarFmt = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
 });
 
 export function formatUsd(amount: number): string {
-  return dollarFmt.format(amount);
+  return Math.abs(amount) >= 1
+    ? dollarFmt.format(amount)
+    : subDollarFmt.format(amount);
 }

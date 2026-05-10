@@ -229,6 +229,7 @@ export function RecipeForm(props: Props) {
             type="button"
             variant="ghost"
             size="sm"
+            aria-label="Add ingredient"
             onClick={() =>
               ingredients.append({
                 position: ingredients.fields.length,
@@ -296,6 +297,7 @@ export function RecipeForm(props: Props) {
             type="button"
             variant="ghost"
             size="sm"
+            aria-label="Add step"
             onClick={() =>
               steps.append({ position: steps.fields.length, body: "" })
             }

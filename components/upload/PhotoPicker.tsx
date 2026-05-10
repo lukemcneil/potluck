@@ -89,6 +89,12 @@ export function PhotoPicker({
 
   return (
     <div>
+      {/*
+        These two file inputs are triggered programmatically by the
+        visible Take/From-library buttons. We `aria-hidden` and
+        `tabIndex={-1}` them so screen readers and keyboard users
+        don't encounter unlabeled file pickers in the focus order.
+      */}
       <input
         ref={cameraInputRef}
         type="file"
@@ -97,6 +103,8 @@ export function PhotoPicker({
         multiple
         onChange={(e) => handleFiles(e.target.files)}
         className="sr-only"
+        aria-hidden
+        tabIndex={-1}
       />
       <input
         ref={libraryInputRef}
@@ -105,6 +113,8 @@ export function PhotoPicker({
         multiple
         onChange={(e) => handleFiles(e.target.files)}
         className="sr-only"
+        aria-hidden
+        tabIndex={-1}
       />
 
       {photos.length === 0 ? (
