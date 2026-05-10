@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: "Sign in",
 };
 
-type SearchParams = Promise<{ callbackUrl?: string }>;
+type SearchParams = Promise<{ callbackUrl?: string; error?: string }>;
 
 export default async function SignInPage({
   searchParams,
@@ -17,11 +17,16 @@ export default async function SignInPage({
   searchParams: SearchParams;
 }) {
   const session = await auth();
-  const { callbackUrl } = await searchParams;
+  const { callbackUrl, error } = await searchParams;
 
   if (session?.user) {
     redirect(callbackUrl ?? "/feed");
   }
+
+  // Auth.js redirects a rejected sign-in here with ?error=AccessDenied.
+  // That happens when POTLUCK_ALLOWED_EMAILS is set and the address
+  // isn't on the list (typical on family-only / private deployments).
+  const accessDenied = error === "AccessDenied";
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-12">
@@ -39,6 +44,13 @@ export default async function SignInPage({
         <p className="mt-2 text-center text-sm text-muted-foreground">
           Sign in to build your cookbook and share recipes with the people you cook for.
         </p>
+
+        {accessDenied && (
+          <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            That account isn&apos;t on the guest list for this kitchen. If you
+            think it should be, ask whoever sent you the link.
+          </div>
+        )}
 
         <form
           className="mt-6"

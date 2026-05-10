@@ -23,6 +23,27 @@ const adapter = DrizzleAdapter(db, {
   authenticatorsTable: authenticators,
 });
 
+/**
+ * If POTLUCK_ALLOWED_EMAILS is set, only those addresses can sign in.
+ * Comma- or whitespace-separated, case-insensitive. When unset, anyone
+ * with a Google account can sign up — fine for local dev, NOT what
+ * you want on a public host.
+ *
+ * Examples:
+ *   POTLUCK_ALLOWED_EMAILS="me@gmail.com,wife@gmail.com,brother@gmail.com"
+ */
+function loadAllowedEmails(): Set<string> | null {
+  const raw = process.env.POTLUCK_ALLOWED_EMAILS;
+  if (!raw) return null;
+  const list = raw
+    .split(/[\s,]+/)
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return list.length === 0 ? null : new Set(list);
+}
+
+const ALLOWED_EMAILS = loadAllowedEmails();
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter,
   session: { strategy: "database" },
@@ -56,6 +77,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
   },
   callbacks: {
+    async signIn({ user }) {
+      // No allowlist configured → behave like a public app.
+      if (!ALLOWED_EMAILS) return true;
+      const email = user.email?.toLowerCase();
+      if (!email) return false;
+      // Auth.js will redirect rejected users to /signin?error=AccessDenied.
+      return ALLOWED_EMAILS.has(email);
+    },
     async session({ session, user }) {
       if (session.user && user) {
         session.user.id = user.id;
