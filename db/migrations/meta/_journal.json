@@ -15,6 +15,13 @@
       "when": 1778355729222,
       "tag": "0001_potluck_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778364434256,
+      "tag": "0002_cooing_sentry",
+      "breakpoints": true
     }
   ]
 }

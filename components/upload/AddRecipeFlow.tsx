@@ -13,6 +13,14 @@ import {
 } from "@/components/upload/PhotoPicker";
 import type { ExtractedRecipe } from "@/lib/validators";
 
+type ExtractionCost = {
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;
+  totalUsd: number;
+};
+
 type Stage =
   | { kind: "choose" }
   | { kind: "photos"; photos: UploadedPhoto[] }
@@ -23,6 +31,7 @@ type Stage =
       photos: UploadedPhoto[];
       prefill: Partial<RecipePrefill> | null;
       sourceUrl?: string | null;
+      cost?: ExtractionCost | null;
     };
 
 type RecipePrefill = {
@@ -62,15 +71,29 @@ export function AddRecipeFlow() {
           imageIds: photos.map((p) => idFromPath(p.publicPath)),
         }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+      const body = (await res.json().catch(() => ({}))) as {
+        recipe?: ExtractedRecipe;
+        cost?: ExtractionCost;
+        error?: string;
+        reason?: string;
+      };
+      if (res.status === 422 && body?.error === "no_recipe_found") {
+        setExtractError(
+          body.reason
+            ? `We couldn't find a recipe in those photos. ${body.reason} You can try different photos, or "Just save the photos" / "Type it in" instead.`
+            : "We couldn't find a recipe in those photos. You can try different photos, or save them as-is.",
+        );
+        setStage({ kind: "photos", photos });
+        return;
+      }
+      if (!res.ok || !body.recipe) {
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
-      const { recipe } = (await res.json()) as { recipe: ExtractedRecipe };
       setStage({
         kind: "form",
         photos,
-        prefill: prefillFromExtraction(recipe),
+        prefill: prefillFromExtraction(body.recipe),
+        cost: body.cost ?? null,
       });
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
@@ -87,16 +110,30 @@ export function AddRecipeFlow() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind: "url", url }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+      const body = (await res.json().catch(() => ({}))) as {
+        recipe?: ExtractedRecipe;
+        cost?: ExtractionCost;
+        error?: string;
+        reason?: string;
+      };
+      if (res.status === 422 && body?.error === "no_recipe_found") {
+        setExtractError(
+          body.reason
+            ? `We couldn't find a recipe at that URL. ${body.reason} Double-check the link, or use "Type it in" instead.`
+            : "We couldn't find a recipe at that URL. Double-check the link, or type it in by hand.",
+        );
+        setStage({ kind: "url" });
+        return;
+      }
+      if (!res.ok || !body.recipe) {
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
-      const { recipe } = (await res.json()) as { recipe: ExtractedRecipe };
       setStage({
         kind: "form",
         photos: [],
-        prefill: prefillFromExtraction(recipe),
+        prefill: prefillFromExtraction(body.recipe),
         sourceUrl: url,
+        cost: body.cost ?? null,
       });
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
@@ -285,6 +322,15 @@ export function AddRecipeFlow() {
           ? "We filled this in for you. Tweak anything that's off, then save."
           : "Fill in your recipe."}
       </p>
+      {stage.cost && (
+        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
+          <span aria-hidden>\u2728</span>
+          AI extraction cost: {formatExtractionCost(stage.cost.totalUsd)}{" "}
+          <span className="text-muted-foreground/60">
+            ({stage.cost.modelId}, {stage.cost.inputTokens + stage.cost.outputTokens} tokens)
+          </span>
+        </p>
+      )}
       <div className="mt-6">
         <RecipeForm
           initialPhotos={stage.photos}
@@ -357,6 +403,18 @@ function BackButton({ onClick }: { onClick: () => void }) {
 function idFromPath(publicPath: string): string {
   const filename = publicPath.split("/").pop() ?? "";
   return filename.includes(".") ? filename.slice(0, filename.lastIndexOf(".")) : filename;
+}
+
+/**
+ * Tiny formatter for the "this extraction cost X" hint in the review
+ * step. Renders in cents when sub-dollar so users see "0.7\u00a2" instead
+ * of "$0.007".
+ */
+function formatExtractionCost(usd: number): string {
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  const cents = usd * 100;
+  if (cents >= 1) return `${cents.toFixed(1)}\u00a2`;
+  return `<0.1\u00a2`;
 }
 
 function prefillFromExtraction(r: ExtractedRecipe): Partial<RecipePrefill> {

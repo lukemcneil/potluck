@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   recipeFormSchema,
   extractedRecipeSchema,
+  extractedRecipeWireSchema,
   collectionFormSchema,
   handleSchema,
   slugify,
@@ -45,10 +46,10 @@ describe("recipeFormSchema", () => {
   });
 });
 
-describe("extractedRecipeSchema", () => {
-  // Schema is strict (all fields required, optional ones are nullable)
-  // because OpenAI structured-outputs strict mode demands every key to be
-  // in `required[]` with `nullable: true` for omittable fields.
+describe("extractedRecipeSchema (strict content shape)", () => {
+  // This is the post-validation shape used everywhere downstream of
+  // extractRecipe(). It does NOT include the wire-level `notARecipe`
+  // discriminator — see the wire-schema tests below for that.
   const baseValid = {
     title: "Banana Bread",
     description: "A warm classic.",
@@ -76,22 +77,13 @@ describe("extractedRecipeSchema", () => {
   });
 
   it("accepts a realistic AI output", () => {
-    const r = extractedRecipeSchema.parse(baseValid);
-    expect(r.ingredients.length).toBe(2);
-    expect(r.mealType).toBe("dessert");
-  });
-
-  it("requires every key to be present (strict-mode contract)", () => {
-    // Drop a single optional-but-required-nullable field; should fail.
-    const { description: _omit, ...withoutDescription } = baseValid;
-    void _omit;
-    expect(extractedRecipeSchema.safeParse(withoutDescription).success).toBe(
-      false,
-    );
+    const parsed = extractedRecipeSchema.parse(baseValid);
+    expect(parsed.ingredients.length).toBe(2);
+    expect(parsed.mealType).toBe("dessert");
   });
 
   it("accepts null in place of optional values", () => {
-    const r = extractedRecipeSchema.parse({
+    const parsed = extractedRecipeSchema.parse({
       ...baseValid,
       description: null,
       prepMinutes: null,
@@ -100,14 +92,76 @@ describe("extractedRecipeSchema", () => {
       mealType: null,
       cuisine: null,
     });
-    expect(r.title).toBe("Banana Bread");
-    expect(r.mealType).toBeNull();
+    expect(parsed.title).toBe("Banana Bread");
+    expect(parsed.mealType).toBeNull();
   });
 
   it("rejects an unknown mealType", () => {
     expect(
       extractedRecipeSchema.safeParse({ ...baseValid, mealType: "elevenses" })
         .success,
+    ).toBe(false);
+  });
+});
+
+describe("extractedRecipeWireSchema (OpenAI strict-mode wire shape)", () => {
+  const baseWire = {
+    notARecipe: false,
+    reason: null,
+    title: "Banana Bread",
+    description: "Warm classic.",
+    ingredients: [
+      { quantity: "3", unit: null, name: "ripe bananas", note: "mashed" },
+    ],
+    steps: ["Mash.", "Mix.", "Bake."],
+    prepMinutes: 10,
+    cookMinutes: 60,
+    servings: "1 loaf",
+    mealType: "dessert" as const,
+    cuisine: "american",
+    suggestedDiets: ["vegetarian"],
+    suggestedTags: ["make-ahead"],
+  };
+
+  it("accepts the recipe-found shape", () => {
+    expect(extractedRecipeWireSchema.safeParse(baseWire).success).toBe(true);
+  });
+
+  it("accepts the no-recipe shape with empty content arrays", () => {
+    const r = extractedRecipeWireSchema.parse({
+      ...baseWire,
+      notARecipe: true,
+      reason: "This is a news article, not a recipe.",
+      title: "",
+      description: null,
+      ingredients: [],
+      steps: [],
+      prepMinutes: null,
+      cookMinutes: null,
+      servings: null,
+      mealType: null,
+      cuisine: null,
+      suggestedDiets: [],
+      suggestedTags: [],
+    });
+    expect(r.notARecipe).toBe(true);
+    expect(r.reason).toMatch(/news article/);
+  });
+
+  it("requires every key to be present (strict-mode contract)", () => {
+    const { description: _omit, ...withoutDescription } = baseWire;
+    void _omit;
+    expect(
+      extractedRecipeWireSchema.safeParse(withoutDescription).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown mealType", () => {
+    expect(
+      extractedRecipeWireSchema.safeParse({
+        ...baseWire,
+        mealType: "elevenses",
+      }).success,
     ).toBe(false);
   });
 });

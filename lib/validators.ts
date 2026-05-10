@@ -55,10 +55,47 @@ export type RecipeFormInput = z.input<typeof recipeFormSchema>;
 export type RecipeFormOutput = z.output<typeof recipeFormSchema>;
 
 // OpenAI's Responses API + structured outputs runs in strict mode which
-// requires EVERY property to be in `required[]`. Optional fields are
-// expressed as `nullable: true` instead of being absent. So this schema
-// uses `.nullable()` (not `.optional()`) for fields the model may omit,
-// and consumers convert null -> undefined when handing off to the form.
+// requires (a) the root schema to be `type: "object"` (so no top-level
+// unions / anyOf) and (b) every property to be in `required[]` with
+// `nullable: true` for omittable fields.
+//
+// To let the model bail when the input isn't actually a recipe, we
+// give it a flat `notARecipe` boolean discriminator + an optional
+// `reason` string. When `notARecipe=true`, all the recipe fields are
+// allowed to be empty (no `min(1)`) — we just throw them away. When
+// `notARecipe=false`, we re-validate against the stricter content
+// schema in code (see `extractRecipe()`).
+export const extractedRecipeWireSchema = z.object({
+  notARecipe: z.boolean(),
+  reason: z.string().trim().max(500).nullable(),
+  title: z.string().trim().max(160),
+  description: z.string().trim().max(2000).nullable(),
+  ingredients: z
+    .array(
+      z.object({
+        quantity: z.string().trim().max(40).nullable(),
+        unit: z.string().trim().max(40).nullable(),
+        name: z.string().trim().max(120),
+        note: z.string().trim().max(200).nullable(),
+      }),
+    )
+    .max(80),
+  steps: z.array(z.string().trim().max(2000)).max(60),
+  prepMinutes: z.number().int().min(0).max(60 * 24).nullable(),
+  cookMinutes: z.number().int().min(0).max(60 * 24).nullable(),
+  servings: z.string().trim().max(40).nullable(),
+  mealType: z.enum(MEAL_TYPES).nullable(),
+  cuisine: z.string().trim().max(60).nullable(),
+  suggestedDiets: z.array(z.string().trim().max(40)).max(10),
+  suggestedTags: z.array(z.string().trim().max(40)).max(10),
+});
+
+/**
+ * The "we found a recipe" shape — used everywhere downstream of
+ * `extractRecipe()`. Stricter than the wire schema (title + at least
+ * one ingredient + at least one step required, ingredient names
+ * non-empty, step text non-empty).
+ */
 export const extractedRecipeSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2000).nullable(),

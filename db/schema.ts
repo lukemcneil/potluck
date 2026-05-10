@@ -3,6 +3,7 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   unique,
@@ -286,6 +287,45 @@ export const saves = sqliteTable(
   ],
 );
 
+/**
+ * AI usage ledger.
+ *
+ * One row per /api/extract call (success or schema-validation failure
+ * — both billed by OpenAI). We keep it append-only so the spend cap
+ * is never blurred by an in-flight retry.
+ *
+ * - `userId` is required: anonymous extraction is not supported.
+ * - `recipeId` is set when the user actually saves the extraction;
+ *    null otherwise (extraction → user discarded the result).
+ * - `costUsd` is denormalized so we don't have to re-do pricing math
+ *    when OpenAI changes prices.
+ */
+export const aiUsage = sqliteTable(
+  "aiUsage",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    recipeId: text("recipeId").references(() => recipes.id, {
+      onDelete: "set null",
+    }),
+    model: text("model").notNull(),
+    inputTokens: integer("inputTokens").notNull(),
+    outputTokens: integer("outputTokens").notNull(),
+    totalTokens: integer("totalTokens").notNull(),
+    costUsd: real("costUsd").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("ai_usage_user_created_idx").on(t.userId, t.createdAt),
+  ],
+);
+
 // Relations export shape kept loose for now; enable when needed for query helpers.
 export const schemaTables = {
   users,
@@ -302,6 +342,7 @@ export const schemaTables = {
   collections,
   collectionRecipes,
   saves,
+  aiUsage,
 };
 
 export const FTS_TABLE_NAME = "recipes_fts";

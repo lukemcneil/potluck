@@ -10,6 +10,14 @@
  *
  * Optionally pass a path to an existing recipe image (jpg/png/heic):
  *   pnpm test:extract path/to/recipe.jpg
+ *
+ * Or pass a recipe URL to exercise the URL-import path (HTML fetched
+ * server-side and handed to the model):
+ *   pnpm test:extract https://www.example.com/some-recipe
+ *
+ * Or run a negative test with a synthetic non-recipe image to verify
+ * the model returns notARecipe=true:
+ *   pnpm test:extract --no-recipe-image
  */
 
 import "dotenv/config";
@@ -26,13 +34,31 @@ async function main() {
     process.exit(1);
   }
 
-  const customPath = process.argv[2];
+  const arg = process.argv[2];
+
+  // URL mode: skip the image pipeline entirely and exercise the
+  // server-side HTML fetch -> LLM extraction path.
+  if (arg && /^https?:\/\//i.test(arg)) {
+    await runUrlMode(arg);
+    return;
+  }
+
+  // Negative-test mode: render an obviously-not-a-recipe image (a fake
+  // email screenshot) and verify the model returns notARecipe=true.
+  const isNoRecipeMode = arg === "--no-recipe-image";
+  const customPath = isNoRecipeMode ? undefined : arg;
+
   let imageBuffer: Buffer;
   let mimeType: string;
   let ext: string;
   let label: string;
 
-  if (customPath) {
+  if (isNoRecipeMode) {
+    imageBuffer = await renderSyntheticNonRecipeImage();
+    mimeType = "image/jpeg";
+    ext = "jpg";
+    label = "synthetic non-recipe image (fake email screenshot)";
+  } else if (customPath) {
     const abs = path.resolve(customPath);
     imageBuffer = await fs.readFile(abs);
     const fileExt = path.extname(abs).toLowerCase().replace(/^\./, "");
@@ -65,26 +91,44 @@ async function main() {
 
   console.log("→ Calling extractRecipe() with gpt-4o vision...\n");
   const startedAt = Date.now();
-  const { recipe, cost } = await extractRecipe({
+  const result = await extractRecipe({
     kind: "imageIds",
     imageIds: [stored.id],
   });
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
 
-  console.log(`✓ Got structured recipe in ${elapsed}s\n`);
+  console.log(`✓ Got result in ${elapsed}s\n`);
   console.log("---- COST ----");
   console.log({
-    model: cost.modelId,
-    inputTokens: cost.inputTokens,
-    outputTokens: cost.outputTokens,
-    cachedInputTokens: cost.cachedInputTokens,
-    inputCostUsd: round(cost.inputCost, 6),
-    cachedInputCostUsd: round(cost.cachedInputCost, 6),
-    outputCostUsd: round(cost.outputCost, 6),
-    totalUsd: round(cost.totalCost, 6),
-    perThousandUsd: round(cost.totalCost * 1000, 2),
+    model: result.cost.modelId,
+    inputTokens: result.cost.inputTokens,
+    outputTokens: result.cost.outputTokens,
+    cachedInputTokens: result.cost.cachedInputTokens,
+    totalUsd: round(result.cost.totalCost, 6),
   });
-  console.log("---- TITLE ----");
+
+  if (result.kind === "no-recipe") {
+    console.log("\n---- OUTCOME ----");
+    console.log(`NO RECIPE FOUND`);
+    console.log(`Reason: ${result.reason}`);
+    if (isNoRecipeMode) {
+      console.log(`\n→ Negative-test sanity check: PASS (model correctly bailed).`);
+    } else if (!customPath) {
+      console.log(`\n→ Synthetic test sanity check: FAIL (expected a recipe).`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (isNoRecipeMode) {
+    console.log(
+      `\n→ Negative-test sanity check: FAIL (model invented a recipe from a non-recipe image).`,
+    );
+    process.exitCode = 1;
+  }
+
+  const recipe = result.recipe;
+  console.log("\n---- TITLE ----");
   console.log(recipe.title);
   if (recipe.description) {
     console.log("\n---- DESCRIPTION ----");
@@ -108,8 +152,6 @@ async function main() {
   }
   console.log("\n---- STEPS ----");
   recipe.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
-  console.log("\n---- RAW JSON ----");
-  console.log(JSON.stringify(recipe, null, 2));
 
   // Sanity-check: a synthetic recipe card mentions "Roasted Tomato Soup"
   // by design. Surface a friendly pass/fail indicator without being
@@ -124,6 +166,57 @@ async function main() {
     console.log(`    ≥ 3 steps (${recipe.steps.length}):                       ${stepsOk ? "PASS" : "FAIL"}`);
     if (!titleOk || !ingredientsOk || !stepsOk) process.exitCode = 1;
   }
+}
+
+async function runUrlMode(url: string) {
+  console.log(`\n→ Importing recipe from URL: ${url}`);
+  console.log("→ Fetching HTML server-side and calling extractRecipe()...\n");
+  const startedAt = Date.now();
+  const result = await extractRecipe({ kind: "url", url });
+  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+
+  console.log(`✓ Got result in ${elapsed}s\n`);
+  console.log("---- COST ----");
+  console.log({
+    model: result.cost.modelId,
+    inputTokens: result.cost.inputTokens,
+    outputTokens: result.cost.outputTokens,
+    cachedInputTokens: result.cost.cachedInputTokens,
+    totalUsd: round(result.cost.totalCost, 6),
+  });
+
+  if (result.kind === "no-recipe") {
+    console.log("\n---- OUTCOME ----");
+    console.log("NO RECIPE FOUND");
+    console.log(`Reason: ${result.reason}`);
+    return;
+  }
+
+  const recipe = result.recipe;
+  console.log("\n---- TITLE ----");
+  console.log(recipe.title);
+  if (recipe.description) {
+    console.log("\n---- DESCRIPTION ----");
+    console.log(recipe.description);
+  }
+  console.log("\n---- META ----");
+  console.log({
+    prepMinutes: recipe.prepMinutes ?? null,
+    cookMinutes: recipe.cookMinutes ?? null,
+    servings: recipe.servings ?? null,
+    mealType: recipe.mealType ?? null,
+    cuisine: recipe.cuisine ?? null,
+    diets: recipe.suggestedDiets ?? [],
+    tags: recipe.suggestedTags ?? [],
+  });
+  console.log("\n---- INGREDIENTS ----");
+  for (const ing of recipe.ingredients) {
+    const head = [ing.quantity, ing.unit].filter(Boolean).join(" ");
+    const note = ing.note ? `, ${ing.note}` : "";
+    console.log(`  • ${head ? `${head} ` : ""}${ing.name}${note}`);
+  }
+  console.log("\n---- STEPS ----");
+  recipe.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
 }
 
 /**
@@ -165,6 +258,38 @@ async function renderSyntheticRecipeCard(): Promise<Buffer> {
 </svg>
   `;
 
+  return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
+}
+
+/**
+ * Renders an SVG that visually resembles an email/forum screenshot — no
+ * ingredients or instructions in sight. Used to verify the "no recipe
+ * found" guardrail. We deliberately avoid food words.
+ */
+async function renderSyntheticNonRecipeImage(): Promise<Buffer> {
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <rect width="1200" height="900" fill="#FFFFFF" />
+  <rect x="0" y="0" width="1200" height="80" fill="#E8EAED" />
+  <text x="40" y="50" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#202124" font-weight="bold">Inbox — Personal</text>
+
+  <text x="40" y="140" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124" font-weight="bold">From: Sarah Chen &lt;sarah@example.com&gt;</text>
+  <text x="40" y="172" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#5F6368">To: me</text>
+  <text x="40" y="200" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#5F6368">Subject: Quarterly planning notes</text>
+
+  <line x1="40" y1="230" x2="1160" y2="230" stroke="#DADCE0" stroke-width="1" />
+
+  <text x="40" y="280" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">Hi team,</text>
+  <text x="40" y="320" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">Just confirming the agenda for Thursday's meeting. We'll review</text>
+  <text x="40" y="350" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">the deck, walk through Q3 numbers, and sync on hiring plans.</text>
+  <text x="40" y="400" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">Please reply with any topics you'd like to add.</text>
+
+  <text x="40" y="460" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">Thanks,</text>
+  <text x="40" y="490" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#202124">Sarah</text>
+
+  <text x="40" y="600" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#9AA0A6">Sent from my computer</text>
+</svg>
+  `;
   return sharp(Buffer.from(svg)).jpeg({ quality: 90 }).toBuffer();
 }
 
