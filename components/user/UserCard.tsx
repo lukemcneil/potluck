@@ -74,7 +74,7 @@ export function UserCard({ user, variant = "card", className }: Props) {
       )}
       <span className="mt-auto flex items-center gap-1 text-xs text-muted-foreground">
         <ChefHat className="size-3.5" />
-        {user.recipeCount} recipe{user.recipeCount === 1 ? "" : "s"}
+        {`${user.recipeCount} recipe${user.recipeCount === 1 ? "" : "s"}`}
       </span>
     </Link>
   );

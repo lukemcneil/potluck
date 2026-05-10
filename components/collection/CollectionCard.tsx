@@ -60,8 +60,7 @@ export function CollectionCard({ collection, viewerHandle, className }: Props) {
         )}
         <div className="mt-auto flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>
-            {collection.recipeCount} recipe
-            {collection.recipeCount === 1 ? "" : "s"}
+            {`${collection.recipeCount} recipe${collection.recipeCount === 1 ? "" : "s"}`}
           </span>
           <VisibilityChip visibility={collection.visibility} />
         </div>

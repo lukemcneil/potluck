@@ -90,8 +90,7 @@ export default async function CollectionDetailPage({
               </p>
             )}
             <p className="mt-1 text-xs text-muted-foreground">
-              {collection.recipeCount} recipe
-              {collection.recipeCount === 1 ? "" : "s"}
+              {`${collection.recipeCount} recipe${collection.recipeCount === 1 ? "" : "s"}`}
             </p>
           </div>
         </div>
