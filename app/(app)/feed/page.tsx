@@ -52,12 +52,14 @@ export default async function FeedPage({
             Public recipes from the Potluck community.
           </p>
         </div>
-        <Link href="/add" className="hidden sm:block">
-          <Button size="sm" className="gap-1.5">
-            <Plus className="size-4" />
-            Add recipe
-          </Button>
-        </Link>
+        <Button
+          render={<Link href="/add" />}
+          size="sm"
+          className="hidden gap-1.5 sm:inline-flex"
+        >
+          <Plus className="size-4" />
+          Add recipe
+        </Button>
       </div>
 
       <div className="-mx-4 mt-4 overflow-x-auto px-4 sm:mx-0 sm:overflow-visible sm:px-0">
@@ -115,12 +117,10 @@ function EmptyState() {
         Once people start sharing recipes you&apos;ll see them here. Be the
         first — snap a photo of a recipe card to add one.
       </p>
-      <Link href="/add" className="mt-4">
-        <Button className="gap-1.5">
-          <Plus className="size-4" />
-          Add recipe
-        </Button>
-      </Link>
+      <Button render={<Link href="/add" />} className="mt-4 gap-1.5">
+        <Plus className="size-4" />
+        Add recipe
+      </Button>
     </div>
   );
 }

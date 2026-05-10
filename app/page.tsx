@@ -13,14 +13,12 @@ export default function HomePage() {
           </span>
         </div>
         <nav className="flex items-center gap-2">
-          <Link href="/feed">
-            <Button variant="ghost" size="sm">
-              Browse recipes
-            </Button>
-          </Link>
-          <Link href="/signin">
-            <Button size="sm">Sign in</Button>
-          </Link>
+          <Button render={<Link href="/feed" />} variant="ghost" size="sm">
+            Browse recipes
+          </Button>
+          <Button render={<Link href="/signin" />} size="sm">
+            Sign in
+          </Button>
         </nav>
       </header>
 
@@ -37,14 +35,12 @@ export default function HomePage() {
           Take a photo of any recipe — handwritten card, magazine page, screenshot — and Potluck turns it into a clean, editable recipe card. Organize into collections, browse friends&apos; kitchens, save what you love.
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <Link href="/signin">
-            <Button size="lg">Get started</Button>
-          </Link>
-          <Link href="/feed">
-            <Button size="lg" variant="outline">
-              See the feed
-            </Button>
-          </Link>
+          <Button render={<Link href="/signin" />} size="lg">
+            Get started
+          </Button>
+          <Button render={<Link href="/feed" />} size="lg" variant="outline">
+            See the feed
+          </Button>
         </div>
       </section>
 

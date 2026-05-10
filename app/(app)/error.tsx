@@ -41,9 +41,9 @@ export default function AppError({
           <RotateCw className="size-4" />
           Try again
         </Button>
-        <Link href="/feed">
-          <Button variant="outline">Back to feed</Button>
-        </Link>
+        <Button render={<Link href="/feed" />} variant="outline">
+          Back to feed
+        </Button>
       </div>
     </div>
   );

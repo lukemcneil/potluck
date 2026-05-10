@@ -120,11 +120,14 @@ function EmptySaves() {
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
         Browse the feed and tap Save on recipes you want to come back to.
       </p>
-      <Link href="/feed" className="mt-3">
-        <Button size="sm" variant="outline">
-          Open feed
-        </Button>
-      </Link>
+      <Button
+        render={<Link href="/feed" />}
+        size="sm"
+        variant="outline"
+        className="mt-3"
+      >
+        Open feed
+      </Button>
     </div>
   );
 }

@@ -165,21 +165,26 @@ export default async function RecipePage({
 
         <div className="mt-4 flex flex-wrap gap-2" data-print="hide">
           {(ingredients.length > 0 || steps.length > 0) && (
-            <Link href={`/r/${recipe.id}/cook`}>
-              <Button size="sm" className="gap-1.5">
-                <CookingPot className="size-3.5" />
-                Cook
-              </Button>
-            </Link>
+            <Button
+              render={<Link href={`/r/${recipe.id}/cook`} />}
+              size="sm"
+              className="gap-1.5"
+            >
+              <CookingPot className="size-3.5" />
+              Cook
+            </Button>
           )}
           <PrintButton />
           {isAuthor && (
-            <Link href={`/r/${recipe.id}/edit`}>
-              <Button size="sm" variant="outline" className="gap-1.5">
-                <Pencil className="size-3.5" />
-                Edit
-              </Button>
-            </Link>
+            <Button
+              render={<Link href={`/r/${recipe.id}/edit`} />}
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+            >
+              <Pencil className="size-3.5" />
+              Edit
+            </Button>
           )}
           {!isAuthor && saveState && (
             <SaveButton

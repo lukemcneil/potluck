@@ -14,6 +14,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import {
+  formatIngredientPrefix,
   parseQuantity,
   pluralizeUnit,
   scaleQuantity,
@@ -158,11 +159,14 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
           {baseServings != null && target != null && (
             <ServingsControl base={baseServings} value={target} onChange={setTarget} />
           )}
-          <Link href={`/r/${recipe.id}`}>
-            <Button variant="ghost" size="icon" aria-label="Exit cook mode">
-              <X className="size-5" />
-            </Button>
-          </Link>
+          <Button
+            render={<Link href={`/r/${recipe.id}`} />}
+            variant="ghost"
+            size="icon"
+            aria-label="Exit cook mode"
+          >
+            <X className="size-5" />
+          </Button>
         </div>
       </header>
 
@@ -191,6 +195,11 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
               <ul className="mt-3 space-y-1.5">
                 {scaledIngredients.map((ing) => {
                   const checked = doneIngredients.has(ing.id);
+                  const prefix = formatIngredientPrefix(
+                    ing.scaledQuantity || ing.quantity,
+                    ing.scaledUnit || ing.unit,
+                    ing.name,
+                  );
                   return (
                     <li key={ing.id}>
                       <button
@@ -217,10 +226,7 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                           {checked && <Check className="size-3" />}
                         </span>
                         <span>
-                          {[ing.scaledQuantity || ing.quantity, ing.scaledUnit || ing.unit]
-                            .filter(Boolean)
-                            .join(" ")}
-                          {ing.quantity || ing.unit ? " " : ""}
+                          {prefix && <>{prefix} </>}
                           <span className="font-medium">{ing.name}</span>
                           {ing.note && (
                             <span className="text-muted-foreground">, {ing.note}</span>
@@ -243,9 +249,13 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                 This recipe has no steps yet. Open the original recipe to see
                 photos or notes.
               </p>
-              <Link href={`/r/${recipe.id}`} className="mt-4">
-                <Button variant="outline">Back to recipe</Button>
-              </Link>
+              <Button
+                render={<Link href={`/r/${recipe.id}`} />}
+                variant="outline"
+                className="mt-4"
+              >
+                Back to recipe
+              </Button>
             </div>
           ) : (
             <>

@@ -17,12 +17,10 @@ export default function AppNotFound() {
         private, deleted, or just a typo away.
       </p>
       <div className="mt-6 flex gap-2">
-        <Link href="/feed">
-          <Button>Back to feed</Button>
-        </Link>
-        <Link href="/search">
-          <Button variant="outline">Search</Button>
-        </Link>
+        <Button render={<Link href="/feed" />}>Back to feed</Button>
+        <Button render={<Link href="/search" />} variant="outline">
+          Search
+        </Button>
       </div>
     </div>
   );

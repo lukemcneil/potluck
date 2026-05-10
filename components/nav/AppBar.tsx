@@ -31,31 +31,32 @@ export async function AppBar() {
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex">
-          <Link href="/feed">
-            <Button variant="ghost" size="sm">
-              Feed
-            </Button>
-          </Link>
-          <Link href="/search">
-            <Button variant="ghost" size="sm" className="gap-1.5">
-              <Search className="size-4" />
-              Search
-            </Button>
-          </Link>
-          <Link href="/cookbook">
-            <Button variant="ghost" size="sm">
-              Cookbook
-            </Button>
-          </Link>
+          <Button render={<Link href="/feed" />} variant="ghost" size="sm">
+            Feed
+          </Button>
+          <Button
+            render={<Link href="/search" />}
+            variant="ghost"
+            size="sm"
+            className="gap-1.5"
+          >
+            <Search className="size-4" />
+            Search
+          </Button>
+          <Button render={<Link href="/cookbook" />} variant="ghost" size="sm">
+            Cookbook
+          </Button>
         </nav>
 
         <div className="flex items-center gap-2">
-          <Link href="/add" className="hidden md:inline-flex">
-            <Button size="sm" className="gap-1.5">
-              <Plus className="size-4" />
-              New recipe
-            </Button>
-          </Link>
+          <Button
+            render={<Link href="/add" />}
+            size="sm"
+            className="hidden gap-1.5 md:inline-flex"
+          >
+            <Plus className="size-4" />
+            New recipe
+          </Button>
 
           {user ? (
             <DropdownMenu>
@@ -88,9 +89,9 @@ export async function AppBar() {
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Link href="/signin">
-              <Button size="sm">Sign in</Button>
-            </Link>
+            <Button render={<Link href="/signin" />} size="sm">
+              Sign in
+            </Button>
           )}
         </div>
       </div>
