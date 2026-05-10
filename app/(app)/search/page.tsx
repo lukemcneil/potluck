@@ -179,9 +179,9 @@ function SearchResults({
             count={recipes.length}
           />
           <ul className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {recipes.map((r) => (
+            {recipes.map((r, i) => (
               <li key={r.id}>
-                <RecipeCard recipe={r} />
+                <RecipeCard recipe={r} priority={i < 3} />
               </li>
             ))}
           </ul>
@@ -236,9 +236,9 @@ function BrowseEmptyState({
             </Link>
           </div>
           <ul className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {recipes.map((r) => (
+            {recipes.map((r, i) => (
               <li key={r.id}>
-                <RecipeCard recipe={r} />
+                <RecipeCard recipe={r} priority={i < 3} />
               </li>
             ))}
           </ul>

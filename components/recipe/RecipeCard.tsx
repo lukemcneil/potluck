@@ -29,10 +29,16 @@ type Props = {
   recipe: RecipeCardData;
   /** Hide the author block (e.g. when shown on the author's own profile). */
   hideAuthor?: boolean;
+  /**
+   * Render the photo with `priority` (and skip lazy loading) so it can be
+   * the LCP element. Set this on the first card or two of an above-the-fold
+   * grid; everything else should stay default-lazy.
+   */
+  priority?: boolean;
   className?: string;
 };
 
-export function RecipeCard({ recipe, hideAuthor, className }: Props) {
+export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
   const total = (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
 
   return (
@@ -53,6 +59,8 @@ export function RecipeCard({ recipe, hideAuthor, className }: Props) {
             className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             placeholder={recipe.photoBlurhash ? "blur" : undefined}
             blurDataURL={recipe.photoBlurhash ?? undefined}
+            priority={priority}
+            loading={priority ? "eager" : undefined}
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-linear-to-br from-primary/15 to-accent/10">

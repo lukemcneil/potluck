@@ -141,9 +141,9 @@ export default async function ProfilePage({
             />
           ) : (
             <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {recipes.map((r) => (
+              {recipes.map((r, i) => (
                 <li key={r.id}>
-                  <RecipeCard recipe={r} hideAuthor />
+                  <RecipeCard recipe={r} hideAuthor priority={i < 3} />
                 </li>
               ))}
             </ul>
