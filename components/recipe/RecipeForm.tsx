@@ -18,14 +18,25 @@ import {
 } from "@/lib/validators";
 import { MEAL_TYPES, VISIBILITY } from "@/db/schema";
 import { cn } from "@/lib/utils";
-import { createRecipeAction } from "@/lib/actions/recipes";
+import {
+  createRecipeAction,
+  updateRecipeAction,
+} from "@/lib/actions/recipes";
 import type { UploadedPhoto } from "@/components/upload/PhotoPicker";
 import { PhotoPicker } from "@/components/upload/PhotoPicker";
 
-type Props = {
-  initial?: Partial<RecipeFormInput>;
-  initialPhotos?: UploadedPhoto[];
-};
+type Props =
+  | {
+      mode?: "create";
+      initial?: Partial<RecipeFormInput>;
+      initialPhotos?: UploadedPhoto[];
+    }
+  | {
+      mode: "edit";
+      recipeId: string;
+      initial?: Partial<RecipeFormInput>;
+      initialPhotos?: UploadedPhoto[];
+    };
 
 const DEFAULTS: RecipeFormInput = {
   title: "",
@@ -45,7 +56,11 @@ const DEFAULTS: RecipeFormInput = {
   photoIds: [],
 };
 
-export function RecipeForm({ initial, initialPhotos = [] }: Props) {
+export function RecipeForm(props: Props) {
+  const mode = props.mode ?? "create";
+  const initial = props.initial;
+  const initialPhotos = props.initialPhotos ?? [];
+
   const [photos, setPhotos] = useState<UploadedPhoto[]>(initialPhotos);
   const [tagInput, setTagInput] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -118,7 +133,14 @@ export function RecipeForm({ initial, initialPhotos = [] }: Props) {
     fd.set("payload", JSON.stringify(payload));
 
     startTransition(async () => {
-      const result = await createRecipeAction({}, fd);
+      const result =
+        mode === "edit"
+          ? await updateRecipeAction(
+              (props as { recipeId: string }).recipeId,
+              {},
+              fd,
+            )
+          : await createRecipeAction({}, fd);
       // server action redirects on success, so we only get here on error
       if (result?.error) {
         setSubmitError(result.error);
@@ -447,7 +469,11 @@ export function RecipeForm({ initial, initialPhotos = [] }: Props) {
           className="gap-1.5 min-w-32"
         >
           {isPending && <Loader2 className="size-4 animate-spin" />}
-          {isPending ? "Saving..." : "Save recipe"}
+          {isPending
+            ? "Saving..."
+            : mode === "edit"
+              ? "Save changes"
+              : "Save recipe"}
         </Button>
       </div>
     </form>

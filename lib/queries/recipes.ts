@@ -1,12 +1,13 @@
 import "server-only";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, like, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db/client";
 import { sqlite } from "@/db/client";
 import {
   recipes,
   recipePhotos,
   users,
+  type MealType,
 } from "@/db/schema";
 import type { RecipeCardData } from "@/components/recipe/RecipeCard";
 
@@ -16,9 +17,49 @@ export type RecipeFeedFilters = {
   authorId?: string;
   /** When set, only public + unlisted are returned (anyone but the author). */
   publicOnly?: boolean;
+  /** Filter by exact meal type. */
+  mealType?: MealType;
+  /** Filter by cuisine (case-insensitive). */
+  cuisine?: string;
+  /** Match recipes that have ALL of the listed diets. */
+  diets?: string[];
+  /** Total time = prep + cook ≤ this. */
+  maxMinutes?: number;
   limit?: number;
   offset?: number;
 };
+
+/**
+ * Builds the shared filter conditions for listing/searching recipes.
+ * Used by both `listRecipeCards` and `searchRecipes` so filters work
+ * the same in both surfaces.
+ */
+function buildFilterConditions(filters: RecipeFeedFilters): SQL[] {
+  const conds: SQL[] = [];
+  if (filters.authorId) conds.push(eq(recipes.authorId, filters.authorId));
+  if (filters.publicOnly) conds.push(eq(recipes.visibility, "public"));
+  if (filters.mealType) conds.push(eq(recipes.mealType, filters.mealType));
+  if (filters.cuisine) {
+    conds.push(eq(sql`LOWER(${recipes.cuisine})`, filters.cuisine.toLowerCase()));
+  }
+  // diets is stored as a JSON array of strings; LIKE on the literal text
+  // is good enough at our scale and avoids needing json_each().
+  if (filters.diets && filters.diets.length > 0) {
+    for (const diet of filters.diets) {
+      const safe = diet.replace(/[\\%_"]/g, "");
+      conds.push(like(recipes.diets, `%"${safe}"%`));
+    }
+  }
+  if (typeof filters.maxMinutes === "number") {
+    conds.push(
+      lte(
+        sql`COALESCE(${recipes.prepMinutes}, 0) + COALESCE(${recipes.cookMinutes}, 0)`,
+        filters.maxMinutes,
+      ),
+    );
+  }
+  return conds;
+}
 
 export async function listRecipeCards(
   filters: RecipeFeedFilters = {},
@@ -26,10 +67,7 @@ export async function listRecipeCards(
   const limit = filters.limit ?? PAGE_SIZE;
   const offset = filters.offset ?? 0;
 
-  const conds = [];
-  if (filters.authorId) conds.push(eq(recipes.authorId, filters.authorId));
-  if (filters.publicOnly) conds.push(eq(recipes.visibility, "public"));
-
+  const conds = buildFilterConditions(filters);
   const where = conds.length === 1 ? conds[0] : conds.length > 1 ? and(...conds) : undefined;
 
   const baseRows = db
@@ -109,7 +147,7 @@ export async function listRecipeCards(
  */
 export async function searchRecipes(
   query: string,
-  opts: { limit?: number; offset?: number } = {},
+  opts: RecipeFeedFilters = {},
 ): Promise<RecipeCardData[]> {
   const limit = opts.limit ?? PAGE_SIZE;
   const offset = opts.offset ?? 0;
@@ -119,21 +157,27 @@ export async function searchRecipes(
   const matchExpr = toFtsMatch(trimmed);
   if (!matchExpr) return [];
 
-  // Ranked by FTS5 bm25; lower is better, so ASC. We only pull recipe ids
-  // here, then re-hydrate via the same join used by listRecipeCards so
-  // every result has the same shape.
+  // FTS hits are usually small; we over-fetch by 4x to give the secondary
+  // filter step room before LIMIT-ing the final ordered set.
+  const fetchLimit = Math.max(limit * 4, 32);
+
   const idRows = sqlite
     .prepare(
       `SELECT recipe_id, bm25(recipes_fts) AS score
        FROM recipes_fts
        WHERE recipes_fts MATCH ?
        ORDER BY score ASC
-       LIMIT ? OFFSET ?`,
+       LIMIT ?`,
     )
-    .all(matchExpr, limit, offset) as Array<{ recipe_id: string; score: number }>;
+    .all(matchExpr, fetchLimit) as Array<{ recipe_id: string; score: number }>;
 
   if (idRows.length === 0) return [];
   const ids = idRows.map((r) => r.recipe_id);
+
+  const filterConds = buildFilterConditions({
+    ...opts,
+    publicOnly: opts.publicOnly ?? true,
+  });
 
   const rows = db
     .select({
@@ -153,9 +197,7 @@ export async function searchRecipes(
     })
     .from(recipes)
     .leftJoin(users, eq(recipes.authorId, users.id))
-    .where(
-      and(eq(recipes.visibility, "public"), inArray(recipes.id, ids)),
-    )
+    .where(and(inArray(recipes.id, ids), ...filterConds))
     .all();
 
   // Reattach hero photos.
@@ -177,7 +219,8 @@ export async function searchRecipes(
     }
   }
 
-  // Preserve FTS rank order.
+  // Preserve FTS rank order, then slice to the page window. We
+  // over-fetched ids so post-filter slicing won't surface a partial page.
   const byId = new Map(rows.map((r) => [r.id, r]));
   const result: RecipeCardData[] = [];
   for (const id of ids) {
@@ -203,7 +246,7 @@ export async function searchRecipes(
       },
     });
   }
-  return result;
+  return result.slice(offset, offset + limit);
 }
 
 /**
@@ -223,10 +266,26 @@ function toFtsMatch(input: string): string | null {
   return tokens.map((t) => `"${t}"*`).join(" ");
 }
 
+/**
+ * Distinct cuisines that have at least one public recipe. Used to
+ * populate the cuisine filter dropdown so we only show options that
+ * actually return results.
+ */
+export async function listAvailableCuisines(): Promise<string[]> {
+  const rows = db
+    .select({ cuisine: recipes.cuisine })
+    .from(recipes)
+    .where(and(eq(recipes.visibility, "public"), sql`${recipes.cuisine} IS NOT NULL AND ${recipes.cuisine} != ''`))
+    .groupBy(recipes.cuisine)
+    .all();
+  return rows
+    .map((r) => (r.cuisine ?? "").trim().toLowerCase())
+    .filter((c) => c.length > 0)
+    .sort();
+}
+
 export async function countRecipes(filters: RecipeFeedFilters = {}): Promise<number> {
-  const conds = [];
-  if (filters.authorId) conds.push(eq(recipes.authorId, filters.authorId));
-  if (filters.publicOnly) conds.push(eq(recipes.visibility, "public"));
+  const conds = buildFilterConditions(filters);
   const where = conds.length === 1 ? conds[0] : conds.length > 1 ? and(...conds) : undefined;
 
   const row = db

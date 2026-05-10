@@ -190,6 +190,146 @@ async function uniqueSlugFor(authorId: string, base: string): Promise<string> {
   return `${base}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export async function updateRecipeAction(
+  recipeId: string,
+  _prev: State,
+  formData: FormData,
+): Promise<State> {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return { error: "You must be signed in." };
+  }
+  const userId = session.user.id;
+  const handle = session.user.handle;
+
+  const owned = db
+    .select({ id: recipes.id, authorId: recipes.authorId, slug: recipes.slug })
+    .from(recipes)
+    .where(eq(recipes.id, recipeId))
+    .get();
+  if (!owned) return { error: "Recipe not found." };
+  if (owned.authorId !== userId) return { error: "Not your recipe." };
+
+  const json = formData.get("payload");
+  if (typeof json !== "string") return { error: "Missing form payload." };
+
+  let parsed;
+  try {
+    parsed = recipeFormSchema.parse(JSON.parse(json));
+  } catch (err) {
+    if (err instanceof ZodError) {
+      const flat = err.flatten();
+      return {
+        error: "Some fields need attention.",
+        fieldErrors: flat.fieldErrors as Record<string, string[]>,
+      };
+    }
+    return { error: "Invalid form data." };
+  }
+
+  // Slug is preserved on edit unless the title changes a lot — we don't
+  // touch it here to keep the URL stable. (Future: add a "regenerate
+  // slug" toggle if a user really wants it.)
+  const now = new Date();
+
+  db.transaction((tx) => {
+    tx.update(recipes)
+      .set({
+        title: parsed.title.trim(),
+        description: parsed.description ?? null,
+        prepMinutes: parsed.prepMinutes ?? null,
+        cookMinutes: parsed.cookMinutes ?? null,
+        servings: parsed.servings ?? null,
+        mealType: parsed.mealType ?? null,
+        cuisine: parsed.cuisine ?? null,
+        diets: parsed.diets ?? [],
+        visibility: parsed.visibility,
+        kind: parsed.kind,
+        sourceUrl: parsed.sourceUrl ?? null,
+        updatedAt: now,
+      })
+      .where(eq(recipes.id, recipeId))
+      .run();
+
+    // Replace child rows wholesale. SQLite's row count for these tables
+    // is tiny (tens), so this is simpler than diffing and the FTS
+    // triggers handle re-indexing of ingredients automatically.
+    tx.delete(recipeIngredients).where(eq(recipeIngredients.recipeId, recipeId)).run();
+    if (parsed.ingredients.length) {
+      tx.insert(recipeIngredients)
+        .values(
+          parsed.ingredients.map((ing, i) => ({
+            recipeId,
+            position: i,
+            quantity: ing.quantity ?? null,
+            unit: ing.unit ?? null,
+            name: ing.name,
+            note: ing.note ?? null,
+          })),
+        )
+        .run();
+    }
+
+    tx.delete(recipeSteps).where(eq(recipeSteps.recipeId, recipeId)).run();
+    if (parsed.steps.length) {
+      tx.insert(recipeSteps)
+        .values(
+          parsed.steps.map((s, i) => ({
+            recipeId,
+            position: i,
+            body: s.body,
+          })),
+        )
+        .run();
+    }
+
+    // Photos are stored on disk, but the form payload sends back the
+    // current ordered list of public paths (existing + newly uploaded).
+    // We replace the recipePhotos rows; the on-disk files are left
+    // alone — orphan cleanup is a separate concern.
+    tx.delete(recipePhotos).where(eq(recipePhotos.recipeId, recipeId)).run();
+    if (parsed.photoIds.length) {
+      tx.insert(recipePhotos)
+        .values(
+          parsed.photoIds.map((path, i) => ({
+            recipeId,
+            position: i,
+            path,
+            createdAt: now,
+          })),
+        )
+        .run();
+    }
+
+    tx.delete(recipeTags).where(eq(recipeTags.recipeId, recipeId)).run();
+    if (parsed.tags.length) {
+      const cleanTagNames = Array.from(
+        new Set(parsed.tags.map((t) => t.trim().toLowerCase()).filter(Boolean)),
+      );
+      for (const name of cleanTagNames) {
+        const existing = tx
+          .select({ id: tags.id })
+          .from(tags)
+          .where(eq(tags.name, name))
+          .get();
+        const tagId = existing?.id ?? crypto.randomUUID();
+        if (!existing) {
+          tx.insert(tags).values({ id: tagId, name }).run();
+        }
+        tx.insert(recipeTags)
+          .values({ recipeId, tagId })
+          .onConflictDoNothing()
+          .run();
+      }
+    }
+  });
+
+  revalidatePath(`/r/${recipeId}`);
+  revalidatePath("/feed");
+  if (handle) revalidatePath(`/u/${handle}`);
+  redirect(`/r/${recipeId}`);
+}
+
 export async function deleteRecipeAction(recipeId: string): Promise<void> {
   const session = await auth();
   if (!session?.user?.id) throw new Error("UNAUTHENTICATED");
