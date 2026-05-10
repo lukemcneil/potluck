@@ -126,9 +126,10 @@
 ## Phase 10 — Docs + deploy
 
 - [ ] Update `README.md` with quickstart + screenshots
-- [ ] `.env.example` with all required keys
-- [ ] Document Fly.io deploy with persistent volume in `DEPLOY.md`
-- [ ] Document Cloudflare Tunnel option
+- [x] `.env.example` with all required keys (incl. `POTLUCK_ALLOWED_EMAILS` for private deploys)
+- [x] `DEPLOY.md` — home-server deploy via Cloudflare Tunnel + systemd + email allowlist + SQLite backups
+- [x] `POTLUCK_ALLOWED_EMAILS` allowlist in `lib/auth.ts#signIn` callback (+ "not on the guest list" message on `/signin?error=AccessDenied`)
+- [ ] Document Fly.io deploy with persistent volume (alternative to home-server path)
 - [ ] Document Turso swap path
 
 ---
