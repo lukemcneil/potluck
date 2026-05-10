@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseQuantity,
   formatQuantity,
+  formatIngredientPrefix,
   pluralizeUnit,
   scaleQuantity,
   scaleStepText,
@@ -187,5 +188,51 @@ describe("scaleStepText", () => {
 
   it("handles unicode vulgar fractions", () => {
     expect(scaleStepText("Add \u00BD cup oil.", 2)).toBe("Add 1 cup oil.");
+  });
+});
+
+describe("formatIngredientPrefix", () => {
+  it("joins quantity and unit with a single space", () => {
+    expect(formatIngredientPrefix("2", "cups", "all-purpose flour")).toBe("2 cups");
+    expect(formatIngredientPrefix("1/2", "tsp", "salt")).toBe("1/2 tsp");
+  });
+
+  it("returns just the quantity when there is no unit", () => {
+    expect(formatIngredientPrefix("3", "", "eggs")).toBe("3");
+    expect(formatIngredientPrefix("3", null, "eggs")).toBe("3");
+  });
+
+  it("returns empty string when both quantity and unit are missing", () => {
+    expect(formatIngredientPrefix("", "", "salt to taste")).toBe("");
+    expect(formatIngredientPrefix(null, null, "salt to taste")).toBe("");
+  });
+
+  it("drops the unit when it exactly duplicates the name", () => {
+    expect(formatIngredientPrefix("1", "green onion", "green onion")).toBe("1");
+    expect(formatIngredientPrefix("3", "Scallions", "scallions")).toBe("3");
+  });
+
+  it("drops the unit when it appears as a whole word in the name", () => {
+    expect(formatIngredientPrefix("2", "leaves", "basil leaves")).toBe("2");
+    expect(formatIngredientPrefix("4", "cloves", "garlic cloves, smashed")).toBe("4");
+  });
+
+  it("keeps the unit when it only matches as a substring (no word boundary)", () => {
+    // "cup" inside "buttercup squash" should NOT trigger dedupe.
+    expect(formatIngredientPrefix("1", "cup", "buttercup squash")).toBe("1 cup");
+  });
+
+  it("keeps the unit when it doesn't appear in the name at all", () => {
+    expect(formatIngredientPrefix("2", "cups", "buttermilk")).toBe("2 cups");
+    expect(formatIngredientPrefix("1", "tbsp", "olive oil")).toBe("1 tbsp");
+  });
+
+  it("handles units with regex metacharacters safely", () => {
+    expect(formatIngredientPrefix("8", "fl oz", "buttermilk")).toBe("8 fl oz");
+    expect(formatIngredientPrefix("8", "fl oz", "buttermilk (fl oz)")).toBe("8");
+  });
+
+  it("trims whitespace around inputs", () => {
+    expect(formatIngredientPrefix("  2  ", "  cups  ", "buttermilk")).toBe("2 cups");
   });
 });

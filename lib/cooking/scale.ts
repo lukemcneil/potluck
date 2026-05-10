@@ -300,6 +300,44 @@ const QUANTITY_UNIT_RE = new RegExp(
 );
 
 /**
+ * Build the "<quantity> <unit>" prefix shown before an ingredient name,
+ * dropping the unit when it would just duplicate words already in the
+ * name. This catches AI-extraction artefacts like
+ *   { quantity: "1", unit: "green onion", name: "green onion" }
+ * which would otherwise render as "1 green onion green onion".
+ *
+ * The dedupe is conservative: we only drop the unit when its full
+ * lowercased form appears as a whole word inside the lowercased name.
+ * "cups" inside "buttercup squash" does NOT count because of the word
+ * boundary check; "leaves" inside "basil leaves" does.
+ */
+export function formatIngredientPrefix(
+  quantity: string | null | undefined,
+  unit: string | null | undefined,
+  name: string,
+): string {
+  const q = (quantity ?? "").trim();
+  const u = (unit ?? "").trim();
+  const n = (name ?? "").trim();
+  if (!q && !u) return "";
+
+  const showUnit = u && !unitDuplicatesName(u, n);
+  return [q, showUnit ? u : ""].filter(Boolean).join(" ");
+}
+
+function unitDuplicatesName(unit: string, name: string): boolean {
+  if (!unit || !name) return false;
+  const u = unit.toLowerCase();
+  const n = name.toLowerCase();
+  // Exact match: { unit: "green onion", name: "green onion" }.
+  if (u === n) return true;
+  // Whole-word containment: { unit: "leaves", name: "basil leaves" }.
+  // Escape regex metachars so units like "fl oz" don't blow up.
+  const escaped = u.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`).test(n);
+}
+
+/**
  * Rescale "<quantity> <unit>" tokens embedded in free-form step text,
  * leaving everything else (temperatures, times, prose) untouched.
  *

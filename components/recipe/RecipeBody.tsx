@@ -6,6 +6,7 @@ import { Minus, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
+  formatIngredientPrefix,
   parseQuantity,
   pluralizeUnit,
   scaleQuantity,
@@ -90,21 +91,25 @@ export function RecipeBody({ ingredients, steps, servings }: Props) {
             </div>
 
             <ul className="mt-3 space-y-2">
-              {scaledIngredients.map((ing) => (
-                <li key={ing.id} className="flex gap-3 text-sm">
-                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/60" />
-                  <span>
-                    {[ing.scaledQuantity || ing.quantity, ing.scaledUnit || ing.unit]
-                      .filter(Boolean)
-                      .join(" ")}
-                    {ing.quantity || ing.unit ? " " : ""}
-                    <span className="font-medium">{ing.name}</span>
-                    {ing.note && (
-                      <span className="text-muted-foreground">, {ing.note}</span>
-                    )}
-                  </span>
-                </li>
-              ))}
+              {scaledIngredients.map((ing) => {
+                const prefix = formatIngredientPrefix(
+                  ing.scaledQuantity || ing.quantity,
+                  ing.scaledUnit || ing.unit,
+                  ing.name,
+                );
+                return (
+                  <li key={ing.id} className="flex gap-3 text-sm">
+                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/60" />
+                    <span>
+                      {prefix && <>{prefix} </>}
+                      <span className="font-medium">{ing.name}</span>
+                      {ing.note && (
+                        <span className="text-muted-foreground">, {ing.note}</span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         </>
