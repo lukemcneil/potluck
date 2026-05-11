@@ -12,7 +12,7 @@ export default function FeedLoading() {
         ))}
       </div>
       <div className="mt-6">
-        <RecipeCardSkeletonGrid count={6} />
+        <RecipeCardSkeletonGrid count={10} compact />
       </div>
     </div>
   );

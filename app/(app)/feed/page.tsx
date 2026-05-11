@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ChefHat, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RecipeCard } from "@/components/recipe/RecipeCard";
+import { FeedList } from "@/components/recipe/FeedList";
 import { FilterChips } from "@/components/filter/FilterChips";
 import {
   listRecipeCards,
@@ -11,6 +11,8 @@ import {
 import { MEAL_TYPES, type MealType } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 24;
 
 export const metadata: Metadata = {
   title: "Feed",
@@ -30,7 +32,7 @@ export default async function FeedPage({
   const sp = await searchParams;
   const filters = parseFilters(sp);
   const [recipes, cuisines] = await Promise.all([
-    listRecipeCards({ publicOnly: true, limit: 48, ...filters }),
+    listRecipeCards({ publicOnly: true, limit: PAGE_SIZE, ...filters }),
     listAvailableCuisines(),
   ]);
 
@@ -40,6 +42,12 @@ export default async function FeedPage({
     (filters.diets && filters.diets.length) ||
     filters.maxMinutes
   );
+
+  // The first page may be a partial page (the only page); only set a
+  // cursor when we actually filled the page so the client knows there
+  // might be more.
+  const initialNextOffset =
+    recipes.length < PAGE_SIZE ? null : recipes.length;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
@@ -73,13 +81,20 @@ export default async function FeedPage({
           <EmptyState />
         )
       ) : (
-        <ul className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {recipes.map((r, i) => (
-            <li key={r.id}>
-              <RecipeCard recipe={r} priority={i < 3} />
-            </li>
-          ))}
-        </ul>
+        <FeedList
+          // Re-key on filters so a filter change tears down the old paging
+          // state and starts fresh on the new initial slice.
+          key={JSON.stringify(sp)}
+          initial={recipes}
+          initialNextOffset={initialNextOffset}
+          filters={{
+            meal: sp.meal,
+            cuisine: sp.cuisine,
+            diet: sp.diet,
+            max: sp.max,
+          }}
+          pageSize={PAGE_SIZE}
+        />
       )}
     </div>
   );

@@ -35,11 +35,23 @@ type Props = {
    * grid; everything else should stay default-lazy.
    */
   priority?: boolean;
+  /**
+   * Compact mode trades the description and author chip for density.
+   * Used by the feed to fit more recipes per screen on mobile.
+   */
+  compact?: boolean;
   className?: string;
 };
 
-export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
+export function RecipeCard({
+  recipe,
+  hideAuthor,
+  priority,
+  compact,
+  className,
+}: Props) {
   const total = (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
+  const showAuthor = !hideAuthor && !compact && recipe.author;
 
   // The card is a single big <Link> wrapping a photo, badges, title, time,
   // servings, cuisine, and an author chip. Screen readers compute the
@@ -47,18 +59,22 @@ export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
   // produces noise like "dinnerMarry Me Chicken Orzo Bake4-5AmericanMby
   // Meredith Crosier". Explicit aria-label keeps the announcement focused
   // on the title with a short, comma-separated context tail.
-  const authorLabel =
-    !hideAuthor && recipe.author
-      ? `by ${recipe.author.name ?? `@${recipe.author.handle ?? ""}`}`
-      : null;
+  const authorLabel = recipe.author
+    ? `by ${recipe.author.name ?? `@${recipe.author.handle ?? ""}`}`
+    : null;
   const ariaLabel = [
     recipe.title,
-    authorLabel,
+    !hideAuthor ? authorLabel : null,
     recipe.cuisine,
     recipe.mealType,
   ]
     .filter(Boolean)
     .join(", ");
+
+  // Tighter sizes hint for compact mode: up to 5 cols on xl screens.
+  const photoSizes = compact
+    ? "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, (max-width: 1280px) 25vw, 20vw"
+    : "(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw";
 
   return (
     <Link
@@ -75,7 +91,7 @@ export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
             src={recipe.photoPath}
             alt=""
             fill
-            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+            sizes={photoSizes}
             className="object-cover transition-transform duration-300 group-hover:scale-[1.02]"
             placeholder={recipe.photoBlurhash ? "blur" : undefined}
             blurDataURL={recipe.photoBlurhash ?? undefined}
@@ -84,7 +100,7 @@ export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
           />
         ) : (
           <div className="flex h-full items-center justify-center bg-linear-to-br from-primary/15 to-accent/10">
-            <ChefHat className="size-10 text-primary/60" />
+            <ChefHat className={cn(compact ? "size-7" : "size-10", "text-primary/60")} />
           </div>
         )}
 
@@ -94,45 +110,62 @@ export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
           </span>
         )}
 
-        <div className="pointer-events-none absolute right-2 bottom-2 flex flex-wrap justify-end gap-1">
-          {recipe.mealType && (
-            <Badge className="border-0 bg-black/65 text-white capitalize">
-              {recipe.mealType}
-            </Badge>
-          )}
-        </div>
+        {!compact && (
+          <div className="pointer-events-none absolute right-2 bottom-2 flex flex-wrap justify-end gap-1">
+            {recipe.mealType && (
+              <Badge className="border-0 bg-black/65 text-white capitalize">
+                {recipe.mealType}
+              </Badge>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-3 sm:p-4">
-        <h3 className="line-clamp-2 font-display text-base font-semibold tracking-tight sm:text-lg">
+      <div
+        className={cn(
+          "flex flex-1 flex-col",
+          compact ? "gap-1 p-2.5" : "gap-2 p-3 sm:p-4",
+        )}
+      >
+        <h3
+          className={cn(
+            "line-clamp-2 font-display font-semibold tracking-tight",
+            compact ? "text-sm" : "text-base sm:text-lg",
+          )}
+        >
           {recipe.title}
         </h3>
 
-        {recipe.description && (
+        {!compact && recipe.description && (
           <p className="line-clamp-2 text-sm text-muted-foreground">
             {recipe.description}
           </p>
         )}
 
-        <div className="mt-auto flex items-center gap-3 text-xs text-muted-foreground">
+        <div
+          className={cn(
+            "mt-auto flex items-center text-muted-foreground",
+            compact ? "gap-2 text-[11px]" : "gap-3 text-xs",
+          )}
+        >
           {total > 0 && (
             <span className="flex items-center gap-1">
-              <Clock className="size-3.5" />
+              <Clock className={compact ? "size-3" : "size-3.5"} />
               {formatMinutes(total)}
             </span>
           )}
           {recipe.servings && (
             <span className="flex items-center gap-1">
-              <Users className="size-3.5" />
+              <Users className={compact ? "size-3" : "size-3.5"} />
               {recipe.servings}
             </span>
           )}
-          {recipe.cuisine && (
+          {!compact && recipe.cuisine && (
             <span className="capitalize">{recipe.cuisine}</span>
           )}
         </div>
 
-        {!hideAuthor && recipe.author && (
+        {showAuthor && recipe.author && (
           <div className="flex items-center gap-2 border-t border-border pt-2 text-xs">
             <Avatar className="size-5">
               <AvatarImage src={recipe.author.image ?? undefined} alt="" />
