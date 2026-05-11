@@ -48,10 +48,15 @@ export function RatingControl({
 
   // Keep local state in sync if the parent re-fetches and passes new
   // values (e.g. after another viewer rates and we navigate away/back).
+  // Deferred to a microtask so React 19's `set-state-in-effect` lint
+  // is happy — this really is the "external prop changed, sync local
+  // state" use case the rule allows for.
   useEffect(() => {
-    setValue(initialValue);
-    setOptAvg(avg);
-    setOptCount(count);
+    queueMicrotask(() => {
+      setValue(initialValue);
+      setOptAvg(avg);
+      setOptCount(count);
+    });
   }, [initialValue, avg, count]);
 
   const display = hover ?? value ?? 0;

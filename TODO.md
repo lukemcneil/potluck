@@ -131,16 +131,23 @@
 - [x] `POTLUCK_ALLOWED_EMAILS` allowlist in `lib/auth.ts#signIn` callback (+ "not on the guest list" message on `/signin?error=AccessDenied`)
 - _(Fly.io / Turso paths intentionally not pursued — deploys live on a self-hosted server.)_
 
+## Phase 11 — Social + utility
+
+- [x] **Ratings**: `recipeRatings` (1–5, composite PK), `setRatingAction` / `clearRatingAction`, optimistic 5-star `RatingControl` on `/r/[id]`, bulk-hydrated `avgRating` + `ratingCount` on every `RecipeCardData`, inline `RatingChip` on cards. Author's self-rating is excluded from the public average.
+- [x] **Comments**: `recipeComments` (flat), `addCommentAction` (1–2000 chars) / `deleteCommentAction` (author OR recipe owner), `<CommentsSection>` on the recipe detail page with optimistic add + delete.
+- [x] **Shopping list generator**: `shoppingLists` + `shoppingListItems`, exact-match `(name, unit)` consolidation in `lib/shopping/consolidate.ts` with quantity summing + glyph fractions, `<AddToShoppingListButton>` on recipe detail, `/cookbook/lists` (list of lists) and `/cookbook/lists/[id]` (tap-to-check + add ad-hoc + archive/delete).
+- [x] **Web Share Target**: manifest `share_target` block + Android `shortcuts`, `/share-receive` route normalizes shared images via the existing /api/upload pipeline, hands off to `/add` via a new `ShareIntent` prop on `AddRecipeFlow`, `/api/uploads/meta` rebuilds UploadedPhoto thumbnails for shared photos.
+- [x] **Push notifications**: VAPID-aware send pipeline (`lib/push/send.ts` — silent no-op when env missing), `/api/push/{subscribe,unsubscribe,public-key}` routes, sw.js push + notificationclick handlers, `<EnableNotificationsItem>` in the account dropdown that hides itself when push isn't configured. Triggers fire from `saveRecipeAction` (first-save only), comments, and ratings. `pnpm push:keys` mints VAPID keys.
+- [x] Vitest coverage on the new server actions: ratings (12), comments (10), shopping (16), `consolidate` (11) = 49 new cases.
+
 ---
 
 ## Deferred (post-v1, do not build yet)
 
-- Comments + ratings on recipes
 - Follow / followers + "from people you follow" feed
-- Shopping list generator
 - Meal planner / calendar
 - Fork-a-recipe (save with edits as your own)
-- Web Share Target (receive shared images from iOS/Android share sheet)
-- Push notifications
+- Threaded replies on comments + comment notifications digest
+- Smart-merge shopping lists (unit conversion, fuzzy ingredient names)
 - Anthropic Claude as alternate AI provider
 - S3/R2 image storage adapter (interface ready, just needs an implementation)

@@ -111,6 +111,11 @@ See `db/schema.ts` (when created). Tables:
 - `collections` — id, ownerId, name, slug, description, coverPhotoPath, visibility (default `public`), createdAt
 - `collectionRecipes` — collectionId, recipeId, position, addedAt (composite PK)
 - `saves` — userId, recipeId, savedAt (composite PK)
+- `recipeRatings` — recipeId, userId (composite PK), value (1–5), createdAt, updatedAt. Author may rate their own recipe; the public average excludes their row.
+- `recipeComments` — id, recipeId, authorId, body, createdAt, updatedAt. Flat (no threads); cascades on recipe delete; per-comment delete allowed for the author OR the recipe owner.
+- `shoppingLists` — id, ownerId, name, createdAt, archivedAt (nullable). Archived lists hide from active pickers but stay browsable.
+- `shoppingListItems` — id, listId, name, quantity, unit, sourceRecipeId (nullable, set null on recipe delete), position, checked, addedAt. Consolidation across recipes is exact-match on `(lower(name), unit)` — see `lib/shopping/consolidate.ts`.
+- `pushSubscriptions` — id, userId, endpoint (unique), p256dhKey, authKey, userAgent, createdAt, lastSeenAt. One row per browser/device that opted in to Web Push; the SW deletes 404/410 endpoints.
 - `recipesFts` — FTS5 virtual table mirroring title/description/ingredients
 
 ---
@@ -139,6 +144,13 @@ POTLUCK_USER_MONTHLY_USD_CAP="2.00"
 
 # Optional — defaults to ./data
 POTLUCK_DATA_DIR="./data"
+
+# Optional — Web Push (notifies recipe authors on comments/ratings/saves).
+# Generate with: pnpm push:keys
+# Push silently disables itself when these are unset.
+VAPID_PUBLIC_KEY="B..."
+VAPID_PRIVATE_KEY="..."
+VAPID_SUBJECT="mailto:you@example.com"
 ```
 
 To get Google OAuth credentials:
@@ -343,6 +355,43 @@ The "Print" button on `/r/[id]` is a tiny client-only `<PrintButton>` that calls
   - The dialog also fires on `appinstalled` to immediately hide install affordances after a successful install.
 - `app/manifest.ts` declares `start_url: "/feed"`, standalone display, and the warm cream/terracotta theme colors. `app/layout.tsx#metadata.appleWebApp` enables iOS web-app behavior; `metadata.icons.apple` points iOS at `/icons/icon-512.svg` for the home-screen icon.
 - The offline cooking flow concretely is: user visits `/r/[id]` while online → SW caches the HTML, the JS chunks, and the recipe photos. Later, offline, the user opens `/feed` (cached → served), taps the recipe (RSC payload → cached → served), and Cook mode (separate route, also cached if previously visited) all work. New recipes obviously can't be discovered offline.
+
+## Ratings, comments, shopping lists
+
+These three landed together in Phase 11 and share the same shape — a thin server action layer over Drizzle, with optimistic client UI:
+
+- **Ratings** (`lib/actions/ratings.ts` + `lib/queries/ratings.ts`): 1–5 integers stored in `recipeRatings` with a composite `(recipeId, userId)` PK. Author *may* rate their own recipe; the public average computation explicitly excludes the author's row via `WHERE userId <> recipes.authorId`. `getRatingSummariesByRecipeId` does the bulk hydration that powers `RecipeCardData.{avgRating, ratingCount}`. The `<RatingControl>` component is fully optimistic: it re-derives the new public average locally, then rolls back on server error.
+- **Comments** (`lib/actions/comments.ts` + `lib/queries/comments.ts`): flat thread, body trimmed and capped at 2000 chars, hard-deleted by either the comment author or the recipe owner. The recipe-detail page hydrates the full list eagerly (small N at our scale; no pagination yet). `<CommentsSection>` adds optimistically with a `temp-` id and swaps it for the server-assigned id once the action returns.
+- **Shopping lists** (`lib/actions/shopping.ts` + `lib/queries/shopping.ts`): two-table model. `addRecipesToShoppingListAction` runs ingredients through `lib/shopping/consolidate.ts`, which merges by `(lower(name), unit)` *only* (no fuzzy name matching, no unit conversion — see `consolidate.ts` docstring for why). New items append after the highest existing position so an in-progress shopper isn't reshuffled. Quantities sum when every input parses cleanly via `lib/cooking/scale.ts#parseQuantity` (ranges average to their midpoint); otherwise the merged item shows the verbatim strings joined by `+` so we never silently lose information.
+
+All three actions fan out to **push notifications** (see below) for the recipe author when the actor is someone else.
+
+## Web Share Target
+
+`app/manifest.ts` registers a `share_target` POST endpoint at `/share-receive`. When the user picks Potluck from the OS share sheet (Android Chrome today; spec is broader), the browser POSTs:
+
+- `title`, `text`, `url` — strings the source app provided. Chrome sometimes drops a URL into `text` instead of `url`; we probe both.
+- `photos[]` — File objects. We run them through the same `processUpload` pipeline `/api/upload` uses so shared photos look identical to picker photos.
+
+`/share-receive`:
+
+1. Requires sign-in (signed-out users get redirected to `/signin?next=/add` and the share is dropped — accepted v1 friction).
+2. Branches on the payload: URL → `/add?shared=url&url=...`; photos → upload + `/add?shared=photos&ids=A,B,C`; text-only → `/add?shared=text&text=...`.
+3. The `/add` page parses the search params into a `ShareIntent` and hands it to `<AddRecipeFlow initialShare={...}>`. The flow's mount-time effect (deferred to a microtask to keep React 19's `set-state-in-effect` lint happy) then skips the choose tile and calls the appropriate `startExtractionFrom*` directly.
+
+`app/api/uploads/meta` is the small companion endpoint that re-derives `UploadedPhoto` thumbnails (width / height / inline placeholder) for shared photo ids — we couldn't stash that metadata in a cookie because mutating cookies from server components is restricted in Next 15+, and bloating URL params with placeholders felt worse.
+
+The manifest also declares Android `shortcuts` for "New recipe" and "Open feed" so a long-press on the home-screen icon gives quick actions.
+
+## Push notifications
+
+VAPID-based Web Push, opt-in per-device.
+
+- **Operator setup**: `pnpm push:keys` mints a VAPID key pair into stdout; paste the three lines into `.env.local` and restart. When `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` are unset, push is silently disabled (the menu opt-in hides itself, server-side `notify*` calls return without doing anything). This is intentional so local dev "just works" without any setup.
+- **Client opt-in**: `<EnableNotificationsItem>` lives in the account dropdown next to the install affordance. It first GETs `/api/push/public-key` to confirm push is configured, then on click runs `Notification.requestPermission` → `pushManager.subscribe` → POSTs the subscription to `/api/push/subscribe`. Already-subscribed devices show "Turn off notifications" instead, which calls `unsubscribe()` locally and POSTs to `/api/push/unsubscribe`.
+- **Server send pipeline** (`lib/push/send.ts`): one row per device in `pushSubscriptions`, one `webpush.sendNotification` per row, capped at TTL=24h. 404/410 responses (subscription gone) cause the row to be deleted; everything else is logged and swallowed so push can never break the user-facing action that triggered it.
+- **Triggers** (`lib/push/notify.ts`): currently fires on **first save** of a recipe (`saveRecipeAction` checks for an existing row before the upsert), on every comment (`addCommentAction`), and on every rating (`setRatingAction`). All `void`-fired so the action that triggered them is never blocked on push latency. Self-actions (author rating/saving/commenting on their own recipe) skip the notify.
+- **Service worker** (`public/sw.js` v2): adds `push` and `notificationclick` handlers. Payload shape is `{ title, body, url, tag?, icon? }`; `tag` lets the OS coalesce repeated alerts on the same resource (e.g. five rating bumps collapse into one banner). Click focuses an existing tab on the target URL when possible, otherwise opens a new window.
 
 ## Gotchas
 
