@@ -270,25 +270,29 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
 
                   {totalSteps > 1 && (
                     <ol className="mt-8 hidden gap-2 sm:flex sm:flex-wrap">
-                      {steps.map((s, i) => (
-                        <li key={s.id}>
-                          <button
-                            type="button"
-                            onClick={() => setStepIndex(i)}
-                            className={cn(
-                              "flex size-8 items-center justify-center rounded-full text-xs font-semibold transition",
-                              i === stepIndex
-                                ? "bg-primary text-primary-foreground"
-                                : doneSteps.has(i)
-                                  ? "bg-primary/15 text-primary"
-                                  : "bg-muted text-muted-foreground hover:bg-muted/70",
-                            )}
-                            aria-label={`Go to step ${i + 1}`}
-                          >
-                            {i + 1}
-                          </button>
-                        </li>
-                      ))}
+                      {steps.map((s, i) => {
+                        const isCurrent = i === stepIndex;
+                        return (
+                          <li key={s.id}>
+                            <button
+                              type="button"
+                              onClick={() => setStepIndex(i)}
+                              className={cn(
+                                "flex size-8 items-center justify-center rounded-full text-xs font-semibold transition",
+                                isCurrent
+                                  ? "bg-primary text-primary-foreground"
+                                  : doneSteps.has(i)
+                                    ? "bg-primary/15 text-primary"
+                                    : "bg-muted text-muted-foreground hover:bg-muted/70",
+                              )}
+                              aria-current={isCurrent ? "step" : undefined}
+                              aria-label={`Go to step ${i + 1}${isCurrent ? " (current)" : ""}`}
+                            >
+                              {i + 1}
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ol>
                   )}
                 </div>
@@ -336,8 +340,13 @@ function ServingsControl({
   onChange: (next: number) => void;
 }) {
   void base;
+  const display = Number.isInteger(value) ? value : value.toFixed(1);
   return (
-    <div className="inline-flex items-center overflow-hidden rounded-full border border-border text-sm">
+    <div
+      className="inline-flex items-center overflow-hidden rounded-full border border-border text-sm"
+      role="group"
+      aria-label={`Servings: ${display}`}
+    >
       <button
         type="button"
         onClick={() => onChange(Math.max(1, Math.round(value) - 1))}
@@ -346,8 +355,11 @@ function ServingsControl({
       >
         <Minus className="size-3.5" />
       </button>
-      <span className="min-w-10 px-1 text-center font-semibold tabular-nums">
-        {Number.isInteger(value) ? value : value.toFixed(1)}
+      <span
+        className="min-w-10 px-1 text-center font-semibold tabular-nums"
+        aria-hidden
+      >
+        {display}
       </span>
       <button
         type="button"

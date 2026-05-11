@@ -99,10 +99,17 @@ function ServingsControl({
   const inc = () => onChange(Math.min(99, Math.round(value) + 1));
   const isModified = Math.abs(value - base) > 1e-6;
 
+  const display = prettyServings(value);
   return (
     <div className="flex items-center gap-2 text-sm">
-      <span className="text-xs text-muted-foreground">Servings</span>
-      <div className="inline-flex items-center overflow-hidden rounded-full border border-border">
+      <span className="text-xs text-muted-foreground" aria-hidden>
+        Servings
+      </span>
+      <div
+        className="inline-flex items-center overflow-hidden rounded-full border border-border"
+        role="group"
+        aria-label={`Servings: ${display}`}
+      >
         <button
           type="button"
           onClick={dec}
@@ -111,8 +118,11 @@ function ServingsControl({
         >
           <Minus className="size-3.5" />
         </button>
-        <span className="min-w-8 px-1 text-center font-semibold tabular-nums">
-          {prettyServings(value)}
+        <span
+          className="min-w-8 px-1 text-center font-semibold tabular-nums"
+          aria-hidden
+        >
+          {display}
         </span>
         <button
           type="button"
