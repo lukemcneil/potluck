@@ -11,6 +11,7 @@ import { auth } from "@/lib/auth";
 import { listRecipeCards } from "@/lib/queries/recipes";
 import { listCollectionsForUser } from "@/lib/queries/collections";
 import { monthlySpendForUser } from "@/lib/queries/ai-usage";
+import { userMonthlyCapUsd } from "@/lib/ai/cap";
 import { RecipeCard } from "@/components/recipe/RecipeCard";
 import { CollectionCard } from "@/components/collection/CollectionCard";
 import { CreateCollectionDialog } from "@/components/collection/CreateCollectionDialog";
@@ -65,12 +66,7 @@ export default async function ProfilePage({
     isOwnProfile ? monthlySpendForUser(profile.id) : Promise.resolve(null),
   ]);
 
-  const aiCapEnv = process.env.POTLUCK_USER_MONTHLY_USD_CAP;
-  const aiCapUsd = (() => {
-    if (!aiCapEnv) return null;
-    const n = Number(aiCapEnv);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  })();
+  const aiCapUsd = userMonthlyCapUsd();
 
   // Hide the All Saves collection from non-owners (it's always private anyway,
   // but defensively filter the list).

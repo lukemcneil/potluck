@@ -132,8 +132,10 @@ OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4o-mini"
 
 # Optional — per-user monthly USD cap on /api/extract spend.
-# Unset / non-positive = no cap. Enforced from the aiUsage ledger.
-POTLUCK_USER_MONTHLY_USD_CAP="1.00"
+# Defaults to $2.00. Set to "0" / "none" to disable. Enforced from the
+# aiUsage ledger; image extraction silently downgrades to gpt-4o-mini
+# once the user is past ~⅔ of the cap.
+POTLUCK_USER_MONTHLY_USD_CAP="2.00"
 
 # Optional — defaults to ./data
 POTLUCK_DATA_DIR="./data"
@@ -317,9 +319,11 @@ The "Print" button on `/r/[id]` is a tiny client-only `<PrintButton>` that calls
   - `monthlySpendForUser(userId)` — UTC-month-anchored aggregate, broken down by model.
   - `recordAiUsage({...})` — best-effort insert; failures are logged but never thrown so usage persistence can't break a successful extraction.
   - `recentUsageForUser(userId, limit)` — recent rows, used by future admin views.
-- `app/api/extract/route.ts` checks `monthlySpendForUser` against `POTLUCK_USER_MONTHLY_USD_CAP` (env-configurable, optional). If the cap is hit it returns 402 with a friendly message; the AddRecipeFlow surfaces the error verbatim. On success it calls `recordAiUsage` before returning the response.
+- `lib/ai/cap.ts` is the single source of truth for the cap. `userMonthlyCapUsd()` defaults to **$2.00** when `POTLUCK_USER_MONTHLY_USD_CAP` is unset; `"0"` / `"none"` / `"off"` disables capping. `userMonthlySoftCapUsd()` returns the cap × ⅔.
+- `app/api/extract/route.ts` reads spend before the call, hard-blocks with 402 at/above the cap, and silently downgrades image extraction to `gpt-4o-mini` (the URL model) once the user is past the soft cap. Successful responses include `spend: { totalUsd, capUsd, degraded }` so the client can react. `recordAiUsage` always runs on success — even when the model said "no recipe", because the call still burned tokens.
+- `app/api/ai/spend/route.ts` is a tiny GET endpoint the AddRecipeFlow polls on mount to decide whether to show an "approaching your budget" hint before the user kicks off an extraction.
 - `components/profile/AiUsageCard.tsx` shows the user their MTD spend on the owner's `/u/[handle]` (only when `isOwnProfile && spend.totalCalls > 0`). When a cap is set, a progress bar shows their burn-down.
-- `components/upload/AddRecipeFlow.tsx` shows the per-extraction cost as a small pill on the review step ("AI extraction cost: 0.7¢ (gpt-4o, 1,652 tokens)"). Sub-dollar costs render in cents for readability.
+- `components/upload/AddRecipeFlow.tsx` shows the per-extraction cost as a small pill on the review step ("AI extraction cost: 0.7¢ (gpt-4o, 1,652 tokens)"). Sub-dollar costs render in cents. When the user is at/over the soft cap, the extracting screen also shows a yellow "image extraction will use gpt-4o-mini for the rest of this month" notice.
 
 ## Gotchas
 

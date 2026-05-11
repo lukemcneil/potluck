@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { extractRecipe } from "@/lib/ai/extract-recipe";
+import { extractRecipe, URL_MODEL } from "@/lib/ai/extract-recipe";
 import {
   monthlySpendForUser,
   recordAiUsage,
 } from "@/lib/queries/ai-usage";
+import {
+  userMonthlyCapUsd,
+  userMonthlySoftCapUsd,
+} from "@/lib/ai/cap";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,18 +25,6 @@ const bodySchema = z.union([
     url: z.string().url(),
   }),
 ]);
-
-/**
- * Reads the per-user monthly spend cap from env. Unset / non-positive
- * values mean "no cap" — useful for self-hosted single-user setups.
- */
-function monthlyCapUsd(): number | null {
-  const raw = process.env.POTLUCK_USER_MONTHLY_USD_CAP;
-  if (!raw) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n;
-}
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -56,26 +48,42 @@ export async function POST(req: Request) {
     );
   }
 
-  const cap = monthlyCapUsd();
-  if (cap != null) {
-    const spend = await monthlySpendForUser(userId);
-    if (spend.totalUsd >= cap) {
-      return NextResponse.json(
-        {
-          error:
-            "You've hit your AI extraction budget for this month. Please try again next month, or type the recipe in by hand.",
-          spend: {
-            totalUsd: spend.totalUsd,
-            capUsd: cap,
-          },
+  const cap = userMonthlyCapUsd();
+  const softCap = userMonthlySoftCapUsd();
+  const spendBefore = cap != null ? await monthlySpendForUser(userId) : null;
+
+  if (cap != null && spendBefore && spendBefore.totalUsd >= cap) {
+    return NextResponse.json(
+      {
+        error:
+          "You've hit your AI extraction budget for this month. Please try again next month, or type the recipe in by hand.",
+        spend: {
+          totalUsd: spendBefore.totalUsd,
+          capUsd: cap,
         },
-        { status: 402 },
-      );
-    }
+      },
+      { status: 402 },
+    );
+  }
+
+  // Soft cap: once a user is past ~⅔ of their monthly budget, route
+  // image extractions through the cheaper model instead of gpt-4o.
+  // URL extraction already uses mini, so it doesn't need a downgrade.
+  let modelOverride: string | undefined;
+  let degraded = false;
+  if (
+    cap != null &&
+    softCap != null &&
+    spendBefore != null &&
+    spendBefore.totalUsd >= softCap &&
+    parsed.data.kind === "imageIds"
+  ) {
+    modelOverride = URL_MODEL;
+    degraded = true;
   }
 
   try {
-    const result = await extractRecipe(parsed.data);
+    const result = await extractRecipe(parsed.data, { modelOverride });
 
     // Persist usage so we can bill / cap reliably. We do this even
     // when the model said "no recipe" — the call still burned tokens.
@@ -87,6 +95,13 @@ export async function POST(req: Request) {
       outputTokens: result.cost.outputTokens,
       costUsd: result.cost.totalCost,
     });
+
+    const totalAfter =
+      (spendBefore?.totalUsd ?? 0) + result.cost.totalCost;
+    const spendPayload =
+      cap != null
+        ? { totalUsd: totalAfter, capUsd: cap, degraded }
+        : null;
 
     const costPayload = {
       modelId: result.cost.modelId,
@@ -102,6 +117,7 @@ export async function POST(req: Request) {
           error: "no_recipe_found",
           reason: result.reason,
           cost: costPayload,
+          spend: spendPayload,
         },
         { status: 422 },
       );
@@ -110,6 +126,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       recipe: result.recipe,
       cost: costPayload,
+      spend: spendPayload,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Extraction failed";

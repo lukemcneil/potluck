@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Camera, ImagePlus, Link as LinkIcon, Pencil, ArrowLeft, Sparkles, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Camera, ImagePlus, Link as LinkIcon, Pencil, ArrowLeft, Sparkles, Loader2, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,25 @@ type ExtractionCost = {
   cachedInputTokens?: number;
   totalUsd: number;
 };
+
+type ExtractionSpend = {
+  totalUsd: number;
+  capUsd: number | null;
+  /** True when the API downgraded this call to gpt-4o-mini. */
+  degraded?: boolean;
+};
+
+type AiSpendSnapshot = {
+  totalUsd: number;
+  capUsd: number | null;
+};
+
+const SOFT_CAP_FRACTION = 2 / 3;
+
+function isApproachingCap(spend: AiSpendSnapshot | null): boolean {
+  if (!spend || spend.capUsd == null) return false;
+  return spend.totalUsd >= spend.capUsd * SOFT_CAP_FRACTION;
+}
 
 type Stage =
   | { kind: "choose" }
@@ -54,10 +73,38 @@ type RecipePrefill = {
   steps: Array<{ position: number; body: string }>;
 };
 
-export function AddRecipeFlow() {
+export function AddRecipeFlow({
+  initialAiSpend = null,
+}: {
+  initialAiSpend?: AiSpendSnapshot | null;
+}) {
   const [stage, setStage] = useState<Stage>({ kind: "choose" });
   const [extractError, setExtractError] = useState<string | null>(null);
   const [urlInput, setUrlInput] = useState("");
+  const [aiSpend, setAiSpend] = useState<AiSpendSnapshot | null>(initialAiSpend);
+
+  // Refresh spend snapshot on mount in case the user already made other
+  // extractions in this session before opening /add. Cheap and cached
+  // by the browser if the user navigates away and back.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/ai/spend", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: AiSpendSnapshot | null) => {
+        if (!cancelled && data) setAiSpend(data);
+      })
+      .catch(() => {
+        // Non-fatal — we'll just skip the warning.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function applySpendUpdate(spend: ExtractionSpend | null | undefined) {
+    if (!spend) return;
+    setAiSpend({ totalUsd: spend.totalUsd, capUsd: spend.capUsd });
+  }
 
   const startExtractionFromPhotos = async (photos: UploadedPhoto[]) => {
     setExtractError(null);
@@ -74,9 +121,11 @@ export function AddRecipeFlow() {
       const body = (await res.json().catch(() => ({}))) as {
         recipe?: ExtractedRecipe;
         cost?: ExtractionCost;
+        spend?: ExtractionSpend;
         error?: string;
         reason?: string;
       };
+      applySpendUpdate(body.spend);
       if (res.status === 422 && body?.error === "no_recipe_found") {
         setExtractError(
           body.reason
@@ -113,9 +162,11 @@ export function AddRecipeFlow() {
       const body = (await res.json().catch(() => ({}))) as {
         recipe?: ExtractedRecipe;
         cost?: ExtractionCost;
+        spend?: ExtractionSpend;
         error?: string;
         reason?: string;
       };
+      applySpendUpdate(body.spend);
       if (res.status === 422 && body?.error === "no_recipe_found") {
         setExtractError(
           body.reason
@@ -292,6 +343,8 @@ export function AddRecipeFlow() {
   }
 
   if (stage.kind === "extracting") {
+    const approaching = isApproachingCap(aiSpend);
+    const isImageExtraction = (stage.photos?.length ?? 0) > 0;
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="relative">
@@ -306,6 +359,18 @@ export function AddRecipeFlow() {
             ? "Fetching the page and parsing it. This usually takes 5–15 seconds."
             : `Looking at ${stage.photos?.length ?? 0} photo${(stage.photos?.length ?? 0) === 1 ? "" : "s"} and turning them into a recipe card. This usually takes 5–15 seconds.`}
         </p>
+        {approaching && aiSpend?.capUsd != null && (
+          <div className="mt-6 inline-flex max-w-sm items-start gap-2 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              You&apos;ve used {formatCapUsd(aiSpend.totalUsd)} of your{" "}
+              {formatCapUsd(aiSpend.capUsd)} monthly AI budget.{" "}
+              {isImageExtraction
+                ? "We'll use the cheaper gpt-4o-mini for the rest of this month."
+                : "URL extraction already uses the cheaper model — no impact."}
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -422,6 +487,14 @@ function formatExtractionCost(usd: number): string {
   const cents = usd * 100;
   if (cents >= 1) return `${cents.toFixed(1)}\u00a2`;
   return `<0.1\u00a2`;
+}
+
+/**
+ * "$2.00" / "$0.43" — used in the cap-warning banner. Always two decimal
+ * places so the figures line up with what the profile shows.
+ */
+function formatCapUsd(usd: number): string {
+  return `$${usd.toFixed(2)}`;
 }
 
 function prefillFromExtraction(r: ExtractedRecipe): Partial<RecipePrefill> {

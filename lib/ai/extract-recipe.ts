@@ -27,10 +27,10 @@ export type ExtractResult = ExtractOk | ExtractNoRecipe;
 // Image extraction needs vision and benefits from gpt-4o's stronger
 // OCR / layout understanding. URL extraction is just text on text, so
 // gpt-4o-mini is ~17x cheaper and good enough.
-const IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
-const URL_MODEL = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
+export const IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
+export const URL_MODEL = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
 
-function modelFor(kind: ExtractInput["kind"]): string {
+function defaultModelFor(kind: ExtractInput["kind"]): string {
   return kind === "url" ? URL_MODEL : IMAGE_MODEL;
 }
 
@@ -72,9 +72,15 @@ export type ExtractInput =
  * isn't a recipe. The cost is reported in both cases (the call still
  * burned tokens). Logs a structured `[ai.extract]` line either way.
  *
+ * `options.modelOverride` forces a specific model (e.g. callers downgrade
+ * to `gpt-4o-mini` when the user is approaching their monthly cap).
+ *
  * Throws if OPENAI_API_KEY is missing or the upstream HTTP call fails.
  */
-export async function extractRecipe(input: ExtractInput): Promise<ExtractResult> {
+export async function extractRecipe(
+  input: ExtractInput,
+  options: { modelOverride?: string } = {},
+): Promise<ExtractResult> {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
       "OPENAI_API_KEY is not set. Add it to .env.local before using recipe extraction.",
@@ -89,7 +95,7 @@ export async function extractRecipe(input: ExtractInput): Promise<ExtractResult>
         ? input.imageDataUrls.length
         : 0;
 
-  const model = modelFor(input.kind);
+  const model = options.modelOverride ?? defaultModelFor(input.kind);
   const startedAt = Date.now();
   const { object, usage } = await generateObject({
     model: openai(model),
