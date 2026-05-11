@@ -136,9 +136,15 @@ export default async function RecipePage({
           {author && (
             <Link
               href={`/u/${author.handle ?? ""}`}
+              // The fallback "M" character inside the Avatar gets
+              // smushed onto the visible "by Meredith Crosier" by the
+              // accessible name algorithm ("M by Meredith Crosier").
+              // Set the link name explicitly and hide the decorative
+              // initial from a11y.
+              aria-label={`by ${author.name ?? `@${author.handle}`}`}
               className="flex items-center gap-2 hover:text-foreground"
             >
-              <Avatar className="size-7">
+              <Avatar className="size-7" aria-hidden>
                 <AvatarImage src={author.image ?? undefined} alt="" />
                 <AvatarFallback>
                   {(author.name ?? author.handle ?? "?").charAt(0).toUpperCase()}
