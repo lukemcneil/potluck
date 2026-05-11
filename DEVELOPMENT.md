@@ -280,7 +280,7 @@ Notes:
   - `parseQuantity` handles integers, decimals, simple fractions (`3/4`), mixed numbers (`1 1/2`), unicode vulgar fractions (`½`, `1¼`, `⅔`, `⅛`–`⅞`), and ranges (`1-2`, `1 to 2`).
   - `formatQuantity` snaps to nearest 1/8 with special cases for thirds — so `1.5 × (2/3) = 1`, not `0.99999`.
   - `scaleQuantity(input, factor)` round-trips: parse → multiply → format. Unparseable strings (`"a pinch"`) are returned unchanged.
-- `components/recipe/IngredientsList.tsx` is a small client component that hosts the servings stepper on the recipe detail page; if `recipe.servings` doesn't parse to a single number it just renders the static list (no scaler).
+- `components/recipe/RecipeBody.tsx` hosts the servings stepper on the recipe detail page and applies a single scaling factor to both the ingredients list and the inline `<qty> <unit>` tokens inside step prose (via `scaleStepText`). If `recipe.servings` doesn't parse to a single number the stepper is hidden and the static list is rendered.
 - `app/(app)/r/[id]/cook/page.tsx` + `components/recipe/CookMode.tsx` is the full-screen cooking view. It uses `screen.wakeLock.request("screen")` (best-effort, re-acquired on `visibilitychange`) so the device doesn't sleep mid-recipe. Layered at `z-50` so it sits above `AppBar` (z-30) and `BottomTabBar` (z-40) without needing a separate route group.
 
 ## Photo carousel

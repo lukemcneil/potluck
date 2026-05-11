@@ -57,7 +57,7 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
   const [doneIngredients, setDoneIngredients] = useState<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
-  // Servings scaler (same logic as IngredientsList).
+  // Servings scaler — same logic as the detail page's RecipeBody.
   const baseServings = useMemo(() => {
     const parsed = parseQuantity(recipe.servings ?? null);
     if (!parsed) return null;

@@ -73,7 +73,7 @@
 - [x] `app/(app)/r/[id]/page.tsx` — hero photo, ingredients, numbered steps, time/servings/visibility badges, author link
 - [x] Hero photo carousel (`components/recipe/PhotoCarousel.tsx` — scroll-snap, dot indicators, desktop arrows, single-photo fallback)
 - [x] `lib/cooking/scale.ts` — fraction-aware quantity parser + scaler (handles `1 1/2`, `3/4`, `0.5`, `½`, `1-2` ranges); 20 vitest assertions
-- [x] `components/recipe/IngredientsList.tsx` — servings stepper that rescales quantities live, snaps to eighths/thirds
+- [x] `components/recipe/RecipeBody.tsx` — servings stepper that rescales ingredient quantities + inline `<qty> <unit>` tokens in step prose; snaps to eighths/thirds
 - [x] `app/(app)/r/[id]/cook/page.tsx` — full-screen cook mode (large text, ingredient checkboxes, step-by-step nav, screen wake lock, exits to recipe)
 - [ ] Print view (`@media print` styles)
 - [x] `app/(app)/r/[id]/edit/page.tsx` — author-only edit, prefilled `RecipeForm` (mode=edit), preserves slug/URL
