@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, lte, or, sql } from "drizzle-orm";
 import path from "node:path";
 
 import * as schema from "../schema";
@@ -126,6 +126,73 @@ describe("Potluck schema", () => {
         .values({ ownerId: user.id, name: "Different Name", slug: "weeknight-dinners" })
         .run(),
     ).toThrow();
+  });
+
+  it("maxMinutes filter excludes recipes with no time data", () => {
+    // Regression: COALESCE(prep,0)+COALESCE(cook,0) treats NULL as 0,
+    // which made `total ≤ 20` also match recipes with no time set.
+    // The runtime filter now requires at least one of prep/cook to be
+    // non-null. This test mirrors that SQL so the behavior stays pinned.
+    const { db } = env;
+    const [user] = db
+      .insert(schema.users)
+      .values({ email: "time@test.com", handle: "time" })
+      .returning()
+      .all();
+
+    db.insert(schema.recipes)
+      .values([
+        {
+          authorId: user.id,
+          title: "Quick salad",
+          slug: "quick-salad",
+          prepMinutes: 10,
+          cookMinutes: 5,
+        },
+        {
+          authorId: user.id,
+          title: "Slow stew",
+          slug: "slow-stew",
+          prepMinutes: 30,
+          cookMinutes: 60,
+        },
+        {
+          authorId: user.id,
+          title: "Photos only",
+          slug: "photos-only",
+          prepMinutes: null,
+          cookMinutes: null,
+        },
+        {
+          authorId: user.id,
+          title: "Just prep",
+          slug: "just-prep",
+          prepMinutes: 18,
+          cookMinutes: null,
+        },
+      ])
+      .run();
+
+    const max = 20;
+    const rows = db
+      .select({ title: schema.recipes.title })
+      .from(schema.recipes)
+      .where(
+        and(
+          or(
+            isNotNull(schema.recipes.prepMinutes),
+            isNotNull(schema.recipes.cookMinutes),
+          ),
+          lte(
+            sql`COALESCE(${schema.recipes.prepMinutes}, 0) + COALESCE(${schema.recipes.cookMinutes}, 0)`,
+            max,
+          ),
+        ),
+      )
+      .all();
+
+    const titles = rows.map((r) => r.title).sort();
+    expect(titles).toEqual(["Just prep", "Quick salad"]);
   });
 
   it("touches updatedAt-style raw query and counts rows", () => {

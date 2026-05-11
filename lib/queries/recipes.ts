@@ -1,6 +1,17 @@
 import "server-only";
 
-import { and, desc, eq, inArray, lte, like, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  lte,
+  like,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { db } from "@/db/client";
 import { sqlite } from "@/db/client";
 import {
@@ -51,6 +62,15 @@ function buildFilterConditions(filters: RecipeFeedFilters): SQL[] {
     }
   }
   if (typeof filters.maxMinutes === "number") {
+    // We want recipes whose total time fits the cap, but a recipe with
+    // no prep/cook data shouldn't silently pass the filter — `COALESCE`
+    // would treat both NULLs as 0 and "0 ≤ 20" is always true. Require
+    // at least one of the two to be set so the comparison is meaningful.
+    const atLeastOneSet = or(
+      isNotNull(recipes.prepMinutes),
+      isNotNull(recipes.cookMinutes),
+    );
+    if (atLeastOneSet) conds.push(atLeastOneSet);
     conds.push(
       lte(
         sql`COALESCE(${recipes.prepMinutes}, 0) + COALESCE(${recipes.cookMinutes}, 0)`,
