@@ -79,7 +79,7 @@ function Feature({
       <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
         {icon}
       </div>
-      <h3 className="mt-4 text-base font-semibold">{title}</h3>
+      <h2 className="mt-4 text-base font-semibold">{title}</h2>
       <p className="mt-1 text-sm text-muted-foreground">{body}</p>
     </div>
   );

@@ -66,7 +66,7 @@ export default async function CookbookPage() {
           <ul className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recentSaves.map((r, i) => (
               <li key={r.id}>
-                <RecipeCard recipe={r} priority={i < 3} />
+                <RecipeCard recipe={r} priority={i < 3} headingLevel="h3" />
               </li>
             ))}
           </ul>

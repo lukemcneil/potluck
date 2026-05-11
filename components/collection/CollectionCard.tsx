@@ -19,19 +19,27 @@ export function CollectionCard({ collection, viewerHandle, className }: Props) {
   const handle = viewerHandle ?? collection.ownerHandle ?? null;
   const href = handle ? `/u/${handle}/c/${collection.slug}` : "#";
 
-  // Without an explicit label, the card's accessible name is the smushed
-  // concatenation of descendant text (e.g. "Test collection1 recipePublic").
-  // We synthesize a clean comma-separated label.
+  // Build the accessible name from the same content we paint, in the
+  // same order, so axe-core's `label-content-name-mismatch` rule (every
+  // visible text node must appear in the accessible name) is satisfied
+  // and the announcement reads as a clean comma-separated string
+  // instead of "Test collectionSaves1 recipePublic".
   const recipeWord = collection.recipeCount === 1 ? "recipe" : "recipes";
-  const ariaLabel = [
-    collection.name,
-    `${collection.recipeCount} ${recipeWord}`,
+  const visibilityLabel =
     collection.visibility === "public"
-      ? "public"
+      ? "Public"
       : collection.visibility === "unlisted"
-        ? "unlisted"
-        : "private",
-  ].join(", ");
+        ? "Unlisted"
+        : "Private";
+  const ariaLabel = [
+    collection.isDefaultSaves ? "Saves" : null,
+    collection.name,
+    collection.description ?? null,
+    `${collection.recipeCount} ${recipeWord}`,
+    visibilityLabel,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <Link
@@ -65,9 +73,9 @@ export function CollectionCard({ collection, viewerHandle, className }: Props) {
       </div>
 
       <div className="flex flex-1 flex-col gap-1.5 p-3 sm:p-4">
-        <h3 className="line-clamp-1 font-display text-base font-semibold tracking-tight sm:text-lg">
+        <h2 className="line-clamp-1 font-display text-base font-semibold tracking-tight sm:text-lg">
           {collection.name}
-        </h3>
+        </h2>
         {collection.description && (
           <p className="line-clamp-2 text-sm text-muted-foreground">
             {collection.description}

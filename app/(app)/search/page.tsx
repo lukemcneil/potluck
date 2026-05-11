@@ -181,7 +181,7 @@ function SearchResults({
           <ul className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recipes.map((r, i) => (
               <li key={r.id}>
-                <RecipeCard recipe={r} priority={i < 3} />
+                <RecipeCard recipe={r} priority={i < 3} headingLevel="h3" />
               </li>
             ))}
           </ul>
@@ -238,7 +238,7 @@ function BrowseEmptyState({
           <ul className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {recipes.map((r, i) => (
               <li key={r.id}>
-                <RecipeCard recipe={r} priority={i < 3} />
+                <RecipeCard recipe={r} priority={i < 3} headingLevel="h3" />
               </li>
             ))}
           </ul>

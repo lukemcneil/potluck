@@ -109,9 +109,9 @@ export default async function CollectionDetailPage({
       {recipes.length === 0 ? (
         <div className="mt-10 flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card/50 px-6 py-12 text-center">
           <ChefHat className="size-8 text-muted-foreground" />
-          <h3 className="mt-3 font-display text-lg font-semibold">
+          <h2 className="mt-3 font-display text-lg font-semibold">
             Nothing here yet
-          </h3>
+          </h2>
           <p className="mt-1 max-w-md text-sm text-muted-foreground">
             {isOwner
               ? "Save recipes to this collection from any recipe page."

@@ -105,9 +105,9 @@
 - [x] Loading states (`loading.tsx`) for every (app) route — feed, search, /r/[id], /r/[id]/edit, /r/[id]/cook, /cookbook, /u/[handle], /u/[handle]/c/[slug], /add, all using `RecipeCardSkeleton` / `CollectionCardSkeleton` primitives
 - [x] Empty states on the surfaces that need them (feed, /search no-match, /search filter no-match, profile, collection, /add review)
 - [x] `error.tsx` boundary at `(app)/error.tsx` with retry + "back to feed"; `(app)/not-found.tsx` for missing pages
-- [ ] Accessibility pass (focus management, aria labels, keyboard nav, color contrast)
-- [ ] Lighthouse mobile pass — perf > 90, a11y > 95
-- [~] Vitest coverage on validators (20+ assertions), scaler math (20 assertions); server actions still TBD
+- [x] Accessibility pass — heading-order on cards (configurable `headingLevel`), label-content-name-mismatch on RecipeCard / CollectionCard (visible text ⊂ accessible name), skip-to-content link in `(app)/layout.tsx`, AriaCard / Cook Mode `aria-current` cues
+- [~] Lighthouse mobile pass — a11y 100 across landing/feed/recipe-detail; perf 81-93 (landing 93 ✓, feed 81, recipe 87). Remaining gap is render-delay LCP from React 19 hydration on the 24-card feed grid; needs deeper bundle work to clear 90.
+- [x] Vitest coverage on validators (20+), scaler math (20+), server actions (47 across recipes/collections/saves)
 
 ## Phase 9.5 — AI cost & observability
 
@@ -125,7 +125,7 @@
 
 ## Phase 10 — Docs + deploy
 
-- [ ] Update `README.md` with quickstart + screenshots
+- [x] Update `README.md` with quickstart + screenshots (slots in `docs/screenshots/`; PNGs still TODO)
 - [x] `.env.example` with all required keys (incl. `POTLUCK_ALLOWED_EMAILS` for private deploys)
 - [x] `DEPLOY.md` — home-server deploy via Cloudflare Tunnel + systemd + email allowlist + SQLite backups
 - [x] `POTLUCK_ALLOWED_EMAILS` allowlist in `lib/auth.ts#signIn` callback (+ "not on the guest list" message on `/signin?error=AccessDenied`)

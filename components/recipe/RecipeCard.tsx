@@ -40,6 +40,14 @@ type Props = {
    * Used by the feed to fit more recipes per screen on mobile.
    */
   compact?: boolean;
+  /**
+   * Heading level for the card title. Defaults to `h2` so the typical
+   * "page H1 → cards H2" structure (feed, search, profile) passes
+   * axe-core's `heading-order` rule. Pages that already nest the cards
+   * under an H2 (e.g. a tabbed section with its own heading) can pass
+   * `"h3"` to keep the document outline tidy.
+   */
+  headingLevel?: "h2" | "h3";
   className?: string;
 };
 
@@ -48,28 +56,40 @@ export function RecipeCard({
   hideAuthor,
   priority,
   compact,
+  headingLevel = "h2",
   className,
 }: Props) {
   const total = (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
   const showAuthor = !hideAuthor && !compact && recipe.author;
 
-  // The card is a single big <Link> wrapping a photo, badges, title, time,
-  // servings, cuisine, and an author chip. Screen readers compute the
-  // accessible name by smashing all the descendant text together, which
-  // produces noise like "dinnerMarry Me Chicken Orzo Bake4-5AmericanMby
-  // Meredith Crosier". Explicit aria-label keeps the announcement focused
-  // on the title with a short, comma-separated context tail.
+  // The card is a single big <Link> that wraps a photo + title + a few
+  // metadata strips. axe-core's `label-content-name-mismatch` rule
+  // requires every piece of *visible* text to also appear in the
+  // accessible name, so we build the aria-label from the same fields
+  // we render — in the same visible order. (Without an aria-label the
+  // SR would smash them all together with no separators, producing
+  // "dinnerMarry Me Chicken Orzo Bake4-5American…".)
+  const totalLabel = total > 0 ? formatMinutes(total) : null;
+  const servingsLabel = recipe.servings;
   const authorLabel = recipe.author
     ? `by ${recipe.author.name ?? `@${recipe.author.handle ?? ""}`}`
     : null;
+  const visibilityLabel =
+    recipe.visibility !== "public" ? recipe.visibility : null;
   const ariaLabel = [
+    visibilityLabel,
     recipe.title,
-    !hideAuthor ? authorLabel : null,
-    recipe.cuisine,
-    recipe.mealType,
+    !compact && recipe.description ? recipe.description : null,
+    totalLabel,
+    servingsLabel,
+    !compact && recipe.cuisine ? recipe.cuisine : null,
+    !compact && recipe.mealType ? recipe.mealType : null,
+    showAuthor ? authorLabel : null,
   ]
     .filter(Boolean)
     .join(", ");
+
+  const Heading = headingLevel;
 
   // Tighter sizes hint for compact mode: up to 5 cols on xl screens.
   const photoSizes = compact
@@ -127,14 +147,14 @@ export function RecipeCard({
           compact ? "gap-1 p-2.5" : "gap-2 p-3 sm:p-4",
         )}
       >
-        <h3
+        <Heading
           className={cn(
             "line-clamp-2 font-display font-semibold tracking-tight",
             compact ? "text-sm" : "text-base sm:text-lg",
           )}
         >
           {recipe.title}
-        </h3>
+        </Heading>
 
         {!compact && recipe.description && (
           <p className="line-clamp-2 text-sm text-muted-foreground">

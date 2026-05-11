@@ -145,18 +145,3 @@ export function makeFormData(payload: unknown): FormData {
   fd.set("payload", JSON.stringify(payload));
   return fd;
 }
-
-/**
- * Standard shape of a `next/navigation#redirect` thrown error so tests
- * can `await expect(action(...)).rejects.toThrow(/^NEXT_REDIRECT/)`.
- * Mirrors Next.js's own marker so future tooling that introspects the
- * digest still works.
- */
-export class TestRedirectError extends Error {
-  digest: string;
-  constructor(public url: string) {
-    super(`NEXT_REDIRECT;replace;${url}`);
-    this.name = "TestRedirectError";
-    this.digest = `NEXT_REDIRECT;replace;${url}`;
-  }
-}
