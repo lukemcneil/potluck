@@ -51,14 +51,23 @@ export function AiUsageCard({ spend, capUsd }: Props) {
 
       {spend.byModel.length > 1 && (
         <ul className="mt-3 grid gap-1 text-xs text-muted-foreground">
-          {spend.byModel.map((m) => (
-            <li key={m.model} className="flex justify-between gap-2">
-              <span className="font-mono">{m.model}</span>
-              <span className="tabular-nums">
-                {`${formatUsd(m.costUsd)} · ${m.calls} call${m.calls === 1 ? "" : "s"}`}
-              </span>
-            </li>
-          ))}
+          {spend.byModel.map((m) => {
+            const costAndCalls = `${formatUsd(m.costUsd)} · ${m.calls} call${m.calls === 1 ? "" : "s"}`;
+            return (
+              <li
+                key={m.model}
+                // The <li> is not interactive, but a screen reader will
+                // still announce its descendant text as a single string
+                // ("gpt-4o$0.1431 · 4 calls"). An aria-label keeps the
+                // model and cost separated by a comma in announcements.
+                aria-label={`${m.model}, ${costAndCalls}`}
+                className="flex justify-between gap-2"
+              >
+                <span className="font-mono">{m.model}</span>
+                <span className="tabular-nums">{costAndCalls}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

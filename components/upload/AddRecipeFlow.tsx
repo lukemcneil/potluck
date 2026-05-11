@@ -361,11 +361,18 @@ function Tile({
   badge?: string;
   onClick: () => void;
 }) {
+  // Without an aria-label the button announces as one smushed string
+  // ("Take or pick photosMagicSnap a recipe card…"). The label keeps
+  // each chunk separated by punctuation when read aloud.
+  const ariaLabel = badge
+    ? `${title}. ${badge}. ${body}`
+    : `${title}. ${body}`;
   return (
     <li>
       <button
         type="button"
         onClick={onClick}
+        aria-label={ariaLabel}
         className="group flex w-full items-start gap-4 rounded-xl border border-border bg-card p-4 text-left transition hover:border-primary/40 hover:bg-card/80 active:scale-[0.99]"
       >
         <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
