@@ -129,8 +129,7 @@
 - [x] `.env.example` with all required keys (incl. `POTLUCK_ALLOWED_EMAILS` for private deploys)
 - [x] `DEPLOY.md` — home-server deploy via Cloudflare Tunnel + systemd + email allowlist + SQLite backups
 - [x] `POTLUCK_ALLOWED_EMAILS` allowlist in `lib/auth.ts#signIn` callback (+ "not on the guest list" message on `/signin?error=AccessDenied`)
-- [ ] Document Fly.io deploy with persistent volume (alternative to home-server path)
-- [ ] Document Turso swap path
+- _(Fly.io / Turso paths intentionally not pursued — deploys live on a self-hosted server.)_
 
 ---
 

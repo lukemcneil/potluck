@@ -22,6 +22,13 @@
       "when": 1778364434256,
       "tag": "0002_cooing_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778522832136,
+      "tag": "0003_dapper_misty_knight",
+      "breakpoints": true
     }
   ]
 }

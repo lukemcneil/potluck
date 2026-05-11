@@ -4,6 +4,7 @@ import { Clock, Users, ChefHat } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { RatingChip } from "@/components/recipe/RatingControl";
 
 export type RecipeCardData = {
   id: string;
@@ -23,6 +24,10 @@ export type RecipeCardData = {
     handle: string | null;
     image: string | null;
   } | null;
+  /** Public average (excludes the author's self-rating). Null when 0 ratings. */
+  avgRating?: number | null;
+  /** Count of NON-author ratings — see above. */
+  ratingCount?: number;
 };
 
 type Props = {
@@ -76,6 +81,10 @@ export function RecipeCard({
     : null;
   const visibilityLabel =
     recipe.visibility !== "public" ? recipe.visibility : null;
+  const ratingLabel =
+    recipe.ratingCount && recipe.avgRating != null
+      ? recipe.avgRating.toFixed(1)
+      : null;
   const ariaLabel = [
     visibilityLabel,
     recipe.title,
@@ -84,6 +93,7 @@ export function RecipeCard({
     servingsLabel,
     !compact && recipe.cuisine ? recipe.cuisine : null,
     !compact && recipe.mealType ? recipe.mealType : null,
+    ratingLabel,
     showAuthor ? authorLabel : null,
   ]
     .filter(Boolean)
@@ -183,6 +193,12 @@ export function RecipeCard({
           {!compact && recipe.cuisine && (
             <span className="capitalize">{recipe.cuisine}</span>
           )}
+          {recipe.ratingCount && recipe.avgRating != null ? (
+            <RatingChip
+              avg={recipe.avgRating}
+              count={recipe.ratingCount}
+            />
+          ) : null}
         </div>
 
         {showAuthor && recipe.author && (

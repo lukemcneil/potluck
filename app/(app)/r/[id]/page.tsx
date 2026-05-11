@@ -29,6 +29,15 @@ import { SaveButton } from "@/components/recipe/SaveButton";
 import { PhotoCarousel } from "@/components/recipe/PhotoCarousel";
 import { PrintButton } from "@/components/recipe/PrintButton";
 import { RecipeBody } from "@/components/recipe/RecipeBody";
+import { RatingControl } from "@/components/recipe/RatingControl";
+import { CommentsSection } from "@/components/recipe/CommentsSection";
+import { AddToShoppingListButton } from "@/components/recipe/AddToShoppingListButton";
+import {
+  getRatingSummary,
+  getViewerRating,
+} from "@/lib/queries/ratings";
+import { listCommentsForRecipe } from "@/lib/queries/comments";
+import { listShoppingListsForUser } from "@/lib/queries/shopping";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +96,14 @@ export default async function RecipePage({
     session?.user?.id && !isAuthor
       ? await getSaveStateForRecipe(session.user.id, recipe.id)
       : null;
+
+  const rating = getRatingSummary(recipe.id);
+  const viewerRating = getViewerRating(recipe.id, session?.user?.id ?? null);
+  const comments = listCommentsForRecipe(recipe.id);
+  const viewerLists =
+    session?.user?.id && (ingredients.length > 0)
+      ? listShoppingListsForUser(session.user.id, { activeOnly: true })
+      : [];
 
   return (
     <article
@@ -169,6 +186,16 @@ export default async function RecipePage({
           )}
         </div>
 
+        <div className="mt-4" data-print="hide">
+          <RatingControl
+            recipeId={recipe.id}
+            initialValue={viewerRating}
+            avg={rating.avg}
+            count={rating.count}
+            canRate={!!session?.user?.id}
+          />
+        </div>
+
         <div className="mt-4 flex flex-wrap gap-2" data-print="hide">
           {(ingredients.length > 0 || steps.length > 0) && (
             <Button
@@ -203,6 +230,13 @@ export default async function RecipePage({
                 isDefaultSaves: c.isDefaultSaves,
               }))}
               size="sm"
+            />
+          )}
+          {session?.user?.id && ingredients.length > 0 && (
+            <AddToShoppingListButton
+              recipeId={recipe.id}
+              recipeTitle={recipe.title}
+              lists={viewerLists.map((l) => ({ id: l.id, name: l.name }))}
             />
           )}
         </div>
@@ -241,6 +275,37 @@ export default async function RecipePage({
           </p>
         </div>
       )}
+
+      <Separator className="my-10" data-print="hide" />
+
+      <CommentsSection
+        recipeId={recipe.id}
+        comments={comments.map((c) => ({
+          id: c.id,
+          body: c.body,
+          createdAt: c.createdAt.toISOString(),
+          author: {
+            id: c.authorId,
+            name: c.authorName,
+            handle: c.authorHandle,
+            image: c.authorImage,
+          },
+          canDelete:
+            !!session?.user?.id &&
+            (session.user.id === c.authorId ||
+              session.user.id === recipe.authorId),
+        }))}
+        recipeAuthorId={recipe.authorId}
+        viewer={
+          session?.user?.id
+            ? {
+                id: session.user.id,
+                name: session.user.name ?? null,
+                image: session.user.image ?? null,
+              }
+            : null
+        }
+      />
     </article>
   );
 }

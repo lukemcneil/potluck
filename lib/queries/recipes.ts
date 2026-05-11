@@ -21,6 +21,7 @@ import {
   type MealType,
 } from "@/db/schema";
 import type { RecipeCardData } from "@/components/recipe/RecipeCard";
+import { getRatingSummariesByRecipeId } from "@/lib/queries/ratings";
 
 const PAGE_SIZE = 24;
 
@@ -136,25 +137,32 @@ export async function listRecipeCards(
     }
   }
 
-  return baseRows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    description: row.description ?? null,
-    prepMinutes: row.prepMinutes ?? null,
-    cookMinutes: row.cookMinutes ?? null,
-    servings: row.servings ?? null,
-    mealType: row.mealType ?? null,
-    cuisine: row.cuisine ?? null,
-    visibility: row.visibility,
-    photoPath: heroByRecipe.get(row.id)?.path ?? null,
-    photoBlurhash: heroByRecipe.get(row.id)?.blurhash ?? null,
-    author: {
-      id: row.authorId,
-      name: row.authorName ?? null,
-      handle: row.authorHandle ?? null,
-      image: row.authorImage ?? null,
-    },
-  }));
+  const ratingByRecipe = getRatingSummariesByRecipeId(ids);
+
+  return baseRows.map((row) => {
+    const rating = ratingByRecipe.get(row.id) ?? { avg: null, count: 0 };
+    return {
+      id: row.id,
+      title: row.title,
+      description: row.description ?? null,
+      prepMinutes: row.prepMinutes ?? null,
+      cookMinutes: row.cookMinutes ?? null,
+      servings: row.servings ?? null,
+      mealType: row.mealType ?? null,
+      cuisine: row.cuisine ?? null,
+      visibility: row.visibility,
+      photoPath: heroByRecipe.get(row.id)?.path ?? null,
+      photoBlurhash: heroByRecipe.get(row.id)?.blurhash ?? null,
+      author: {
+        id: row.authorId,
+        name: row.authorName ?? null,
+        handle: row.authorHandle ?? null,
+        image: row.authorImage ?? null,
+      },
+      avgRating: rating.avg,
+      ratingCount: rating.count,
+    };
+  });
 }
 
 /**
@@ -242,10 +250,12 @@ export async function searchRecipes(
   // Preserve FTS rank order, then slice to the page window. We
   // over-fetched ids so post-filter slicing won't surface a partial page.
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const ratingByRecipe = getRatingSummariesByRecipeId(rows.map((r) => r.id));
   const result: RecipeCardData[] = [];
   for (const id of ids) {
     const row = byId.get(id);
     if (!row) continue;
+    const rating = ratingByRecipe.get(row.id) ?? { avg: null, count: 0 };
     result.push({
       id: row.id,
       title: row.title,
@@ -264,6 +274,8 @@ export async function searchRecipes(
         handle: row.authorHandle ?? null,
         image: row.authorImage ?? null,
       },
+      avgRating: rating.avg,
+      ratingCount: rating.count,
     });
   }
   return result.slice(offset, offset + limit);

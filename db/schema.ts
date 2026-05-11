@@ -326,6 +326,149 @@ export const aiUsage = sqliteTable(
   ],
 );
 
+/**
+ * 1-5 star rating, one row per (user, recipe). The author is allowed
+ * to rate their OWN recipe — that's a self-bookmark, not a review,
+ * and the UI hides their own star from the public average.
+ */
+export const recipeRatings = sqliteTable(
+  "recipeRatings",
+  {
+    recipeId: text("recipeId")
+      .notNull()
+      .references(() => recipes.id, { onDelete: "cascade" }),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    value: integer("value").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.recipeId, t.userId] }),
+    index("recipe_ratings_recipe_idx").on(t.recipeId),
+    index("recipe_ratings_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * Flat (no-thread) comments on a recipe. Soft delete is intentionally
+ * skipped — `deleteRecipeAction` cascades, and a comment author or the
+ * recipe owner can hard-delete a single comment via the action.
+ */
+export const recipeComments = sqliteTable(
+  "recipeComments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    recipeId: text("recipeId")
+      .notNull()
+      .references(() => recipes.id, { onDelete: "cascade" }),
+    authorId: text("authorId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updatedAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("recipe_comments_recipe_created_idx").on(t.recipeId, t.createdAt),
+    index("recipe_comments_author_idx").on(t.authorId),
+  ],
+);
+
+/**
+ * User-owned shopping list. `archivedAt` is a soft "I'm done with this
+ * trip" marker so old lists stay browsable but don't clutter the
+ * default view.
+ */
+export const shoppingLists = sqliteTable(
+  "shoppingLists",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ownerId: text("ownerId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    archivedAt: integer("archivedAt", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("shopping_lists_owner_idx").on(t.ownerId, t.createdAt)],
+);
+
+/**
+ * Items inside a shopping list. `sourceRecipeId` is set when the item
+ * came from a recipe import (so the list can show "from Pad Thai")
+ * and survives the recipe being deleted as `null`.
+ *
+ * Consolidation across recipes uses `(name, unit)` as the merge key —
+ * see `lib/shopping/consolidate.ts`.
+ */
+export const shoppingListItems = sqliteTable(
+  "shoppingListItems",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    listId: text("listId")
+      .notNull()
+      .references(() => shoppingLists.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    quantity: text("quantity"),
+    unit: text("unit"),
+    sourceRecipeId: text("sourceRecipeId").references(() => recipes.id, {
+      onDelete: "set null",
+    }),
+    position: integer("position").notNull().default(0),
+    checked: integer("checked", { mode: "boolean" }).notNull().default(false),
+    addedAt: integer("addedAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("shopping_list_items_list_idx").on(t.listId, t.position)],
+);
+
+/**
+ * One row per browser/device that has opted in to push. Endpoint is
+ * unique per device (the browser-issued URL the push service POSTs to)
+ * and is the canonical handle we use for unsubscribe.
+ */
+export const pushSubscriptions = sqliteTable(
+  "pushSubscriptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dhKey: text("p256dhKey").notNull(),
+    authKey: text("authKey").notNull(),
+    userAgent: text("userAgent"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    lastSeenAt: integer("lastSeenAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("push_subscriptions_user_idx").on(t.userId)],
+);
+
 // Relations export shape kept loose for now; enable when needed for query helpers.
 export const schemaTables = {
   users,
@@ -343,6 +486,11 @@ export const schemaTables = {
   collectionRecipes,
   saves,
   aiUsage,
+  recipeRatings,
+  recipeComments,
+  shoppingLists,
+  shoppingListItems,
+  pushSubscriptions,
 };
 
 export const FTS_TABLE_NAME = "recipes_fts";
