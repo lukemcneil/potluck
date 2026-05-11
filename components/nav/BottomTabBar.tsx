@@ -71,12 +71,27 @@ export function BottomTabBar() {
                 <Link
                   href={tab.href}
                   aria-label={tab.label}
+                  aria-current={active ? "page" : undefined}
                   className="flex flex-col items-center gap-0.5"
                 >
-                  <span className="flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-4 ring-background transition active:scale-95">
+                  <span
+                    className={cn(
+                      "flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-4 ring-background transition active:scale-95",
+                      // Subtle ring brightening when this is the
+                      // current tab, so the floating button reflects
+                      // active state instead of looking identical on
+                      // every page.
+                      active && "ring-primary/30",
+                    )}
+                  >
                     <Icon className="size-6" />
                   </span>
-                  <span className="text-[11px] font-medium text-muted-foreground">
+                  <span
+                    className={cn(
+                      "text-[11px] font-medium",
+                      active ? "text-primary" : "text-muted-foreground",
+                    )}
+                  >
                     {tab.label}
                   </span>
                 </Link>
