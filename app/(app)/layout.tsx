@@ -1,5 +1,6 @@
 import { AppBar } from "@/components/nav/AppBar";
 import { BottomTabBar } from "@/components/nav/BottomTabBar";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 
 export default function AppShellLayout({
   children,
@@ -11,6 +12,7 @@ export default function AppShellLayout({
       <AppBar />
       <main className="flex-1 pb-24 md:pb-10">{children}</main>
       <BottomTabBar />
+      <InstallPrompt />
     </div>
   );
 }

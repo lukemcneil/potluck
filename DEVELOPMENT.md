@@ -325,6 +325,24 @@ The "Print" button on `/r/[id]` is a tiny client-only `<PrintButton>` that calls
 - `components/profile/AiUsageCard.tsx` shows the user their MTD spend on the owner's `/u/[handle]` (only when `isOwnProfile && spend.totalCalls > 0`). When a cap is set, a progress bar shows their burn-down.
 - `components/upload/AddRecipeFlow.tsx` shows the per-extraction cost as a small pill on the review step ("AI extraction cost: 0.7¢ (gpt-4o, 1,652 tokens)"). Sub-dollar costs render in cents. When the user is at/over the soft cap, the extracting screen also shows a yellow "image extraction will use gpt-4o-mini for the rest of this month" notice.
 
+## PWA + offline cooking
+
+- `public/sw.js` is a hand-rolled service worker (no `next-pwa`). Caching strategy is split per request type:
+  - `/uploads/*` → cache-first into `potluck-photos-vN`. Photos are immutable per id so once we have one, we never refetch.
+  - `/_next/static/*`, `/icons/*`, `/manifest.webmanifest` → cache-first into `potluck-runtime-vN`. Hashed/static, also effectively immutable.
+  - HTML navigations (and Accept: text/html responses) → stale-while-revalidate into `potluck-pages-vN`. Cached HTML is served immediately; a background fetch refreshes for next time. When neither cache nor network is available, the SW returns the pre-cached `/offline` page.
+  - Anything else (RSC payloads, fonts) → network-first with cache fallback. This is what makes Next.js link-based navigation between cached recipes still work offline.
+  - `/api/*`, `/_next/image*`, non-GET → passthrough; never cached.
+  - Cache names embed `SW_VERSION`; bump it when caching behavior changes meaningfully and the `activate` handler will GC older caches.
+- `components/pwa/ServiceWorkerRegistrar.tsx` registers the SW on `load` (so it doesn't compete with hydration), production-only — the dev server invalidates assets too aggressively for SW caching to behave.
+- `app/offline/page.tsx` is a tiny static page (`/offline`) used as the SW's last-resort fallback. It points the user back at `/feed` and `/cookbook`, both of which work from cache when those have been visited online.
+- `components/pwa/InstallPrompt.tsx` shows a small "Install Potluck" banner above the bottom tab bar:
+  - Android/desktop: stashes `beforeinstallprompt` and triggers the native dialog from a button.
+  - iOS Safari: opens an "Add to Home Screen" instructions sheet (no `beforeinstallprompt` fires on iOS).
+  - Hides itself when launched from the home screen (`display-mode: standalone` or `navigator.standalone`) and persists a 14-day "not now" via `localStorage`.
+- `app/manifest.ts` declares `start_url: "/feed"`, standalone display, and the warm cream/terracotta theme colors. `app/layout.tsx#metadata.appleWebApp` enables iOS web-app behavior; `metadata.icons.apple` points iOS at `/icons/icon-512.svg` for the home-screen icon.
+- The offline cooking flow concretely is: user visits `/r/[id]` while online → SW caches the HTML, the JS chunks, and the recipe photos. Later, offline, the user opens `/feed` (cached → served), taps the recipe (RSC payload → cached → served), and Cook mode (separate route, also cached if previously visited) all work. New recipes obviously can't be discovered offline.
+
 ## Gotchas
 
 - **pnpm build approvals**: `sharp`, `better-sqlite3`, `unrs-resolver`, `esbuild`, `msw` need `pnpm approve-builds`. Configured in `package.json#pnpm.onlyBuiltDependencies` and `pnpm-workspace.yaml#allowBuilds`. If you see `[ERR_PNPM_IGNORED_BUILDS]`, run `pnpm approve-builds --all`.

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Fraunces, Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { ServiceWorkerRegistrar } from "@/components/pwa/ServiceWorkerRegistrar";
 import "./globals.css";
 
 const inter = Inter({
@@ -26,6 +27,18 @@ export const metadata: Metadata = {
     "Snap a photo of any recipe and Potluck turns it into a beautiful, shareable recipe card. Build your cookbook, browse friends' kitchens, save what you love.",
   applicationName: "Potluck",
   manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Potluck",
+    statusBarStyle: "default",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.svg", type: "image/svg+xml", sizes: "192x192" },
+      { url: "/icons/icon-512.svg", type: "image/svg+xml", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icons/icon-512.svg", sizes: "180x180" }],
+  },
 };
 
 export const viewport: Viewport = {
@@ -59,6 +72,7 @@ export default function RootLayout({
         >
           {children}
           <Toaster richColors closeButton position="top-center" />
+          <ServiceWorkerRegistrar />
         </ThemeProvider>
       </body>
     </html>

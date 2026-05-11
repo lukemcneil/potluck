@@ -75,7 +75,7 @@
 - [x] `lib/cooking/scale.ts` — fraction-aware quantity parser + scaler (handles `1 1/2`, `3/4`, `0.5`, `½`, `1-2` ranges); 20 vitest assertions
 - [x] `components/recipe/RecipeBody.tsx` — servings stepper that rescales ingredient quantities + inline `<qty> <unit>` tokens in step prose; snaps to eighths/thirds
 - [x] `app/(app)/r/[id]/cook/page.tsx` — full-screen cook mode (large text, ingredient checkboxes, step-by-step nav, screen wake lock, exits to recipe)
-- [ ] Print view (`@media print` styles)
+- [x] Print view (`@media print` styles in `app/globals.css` + `components/recipe/PrintButton.tsx`)
 - [x] `app/(app)/r/[id]/edit/page.tsx` — author-only edit, prefilled `RecipeForm` (mode=edit), preserves slug/URL
 - [x] Server action: `updateRecipeAction` (transactional replace of ingredients/steps/photos/tags)
 - [x] Server action: `deleteRecipeAction`
@@ -91,7 +91,7 @@
 
 ## Phase 8 — Discover, search, save
 
-- [~] `app/(app)/feed/page.tsx` — public recipe feed (filter-aware grid live; infinite scroll TBD)
+- [x] `app/(app)/feed/page.tsx` — public recipe feed (compact 2/3/4/5-col grid, server-rendered first page, infinite scroll via `<FeedList>` + `loadMoreFeedAction`)
 - [x] `components/filter/FilterChips.tsx` — URL-driven meal-type / cuisine / diet (multi) / max-time chips, wired into both `/feed` and `/search`
 - [x] Cuisine filter populates from distinct values via `listAvailableCuisines()` so we never show empty options
 - [x] `app/(app)/search/page.tsx` — debounced query box, **People + Recipes** results, FTS5-backed recipe match (title/description/ingredients), LIKE-based user match (name/handle/bio); empty-query state shows "Cooks on Potluck" + latest recipes; filters narrow recipe results even with empty query
@@ -100,8 +100,8 @@
 
 ## Phase 9 — PWA + polish
 
-- [ ] Service worker for app-shell caching + offline fallback
-- [ ] Install prompt UX (browser-native + iOS instructions sheet)
+- [x] Service worker (`public/sw.js`): cache-first for `/uploads/*` + hashed `/_next/static/*`; stale-while-revalidate for HTML/RSC navigations; falls back to `/offline`. Cooking offline works for any recipe the user has visited while online.
+- [x] Install prompt UX (`components/pwa/InstallPrompt.tsx`) — `beforeinstallprompt` for Android/desktop, iOS Safari "Add to Home Screen" instructions sheet, 14-day "not now" persistence
 - [x] Loading states (`loading.tsx`) for every (app) route — feed, search, /r/[id], /r/[id]/edit, /r/[id]/cook, /cookbook, /u/[handle], /u/[handle]/c/[slug], /add, all using `RecipeCardSkeleton` / `CollectionCardSkeleton` primitives
 - [x] Empty states on the surfaces that need them (feed, /search no-match, /search filter no-match, profile, collection, /add review)
 - [x] `error.tsx` boundary at `(app)/error.tsx` with retry + "back to feed"; `(app)/not-found.tsx` for missing pages
@@ -120,8 +120,8 @@
 - [x] Per-user monthly spend cap (`POTLUCK_USER_MONTHLY_USD_CAP`, env-configurable) — `/api/extract` returns 402 with friendly copy when MTD spend ≥ cap
 - [x] Surface "this extraction cost X¢" in the AddRecipeFlow review step (chip below the heading; renders cents when sub-dollar)
 - [x] AI usage card on the owner's `/u/[handle]` — total spend MTD + breakdown by model + progress bar against the configured cap
-- [ ] Auto-fallback to `gpt-4o-mini` when the user is over a soft threshold (~⅔ of cap)
-- [ ] Show on AddRecipeFlow extracting screen if the user is approaching their cap
+- [x] Auto-fallback to `gpt-4o-mini` when the user is over a soft threshold (~⅔ of cap) — `app/api/extract/route.ts`
+- [x] Show on AddRecipeFlow extracting screen if the user is approaching their cap (amber banner with current MTD spend / cap)
 
 ## Phase 10 — Docs + deploy
 
