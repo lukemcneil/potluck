@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { InstallMenuItem } from "@/components/pwa/InstallPrompt";
 import { cn } from "@/lib/utils";
 
 export async function AppBar() {
@@ -84,6 +85,7 @@ export async function AppBar() {
                 <DropdownMenuItem render={<Link href="/cookbook" />}>
                   Cookbook
                 </DropdownMenuItem>
+                <InstallMenuItem />
                 <DropdownMenuSeparator />
                 <SignOutItem />
               </DropdownMenuContent>

@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Download, Share, Plus, X } from "lucide-react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import { Download, Share, Plus, X, MoreVertical } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +19,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 /** Persistent flag so we don't badger users who said no. */
@@ -23,178 +34,379 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
+type Platform = "android" | "ios" | "desktop" | "other";
+
+type InstallContextValue = {
+  /** True when launched from the home screen — hide all install affordances. */
+  isStandalone: boolean;
+  /** Best-guess platform; drives which instructions we show. */
+  platform: Platform;
+  /** True when Chrome's deferred prompt is available for one-tap install. */
+  canPrompt: boolean;
+  /** Open the platform-appropriate flow: native dialog or instructions sheet. */
+  open: () => void;
+  /** Mark "not now"; suppresses both banner and menu badge for ~2 weeks. */
+  dismiss: () => void;
+  /** True when the user soft-dismissed; affects banner only. */
+  dismissed: boolean;
+};
+
+const InstallContext = createContext<InstallContextValue | null>(null);
+
 /**
- * Lightweight install affordance. We:
- *   - Listen for `beforeinstallprompt` (Chromium / Android / desktop
- *     Chrome/Edge) and show a small banner that triggers the native
- *     install dialog when the user opts in.
- *   - On iOS Safari, where `beforeinstallprompt` doesn't exist, show
- *     a banner that opens an "Add to Home Screen" instructions sheet.
- *   - Hide entirely once the app is installed (`display-mode: standalone`)
- *     or after the user explicitly dismisses for ~2 weeks.
+ * Provider that owns the deferred prompt event and platform detection.
+ * Mount once, near the top of the app, so the banner and any "Install
+ * app" menu entry can read the same state.
  */
-export function InstallPrompt() {
+export function InstallPromptProvider({ children }: { children: ReactNode }) {
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
-  const [showIosSheet, setShowIosSheet] = useState(false);
-  const [variant, setVariant] = useState<"hidden" | "native" | "ios">("hidden");
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [platform, setPlatform] = useState<Platform>("other");
+  const [dismissed, setDismissed] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Already installed → never show.
-    if (
-      window.matchMedia("(display-mode: standalone)").matches ||
-      // iOS-specific: navigator.standalone === true when launched from
-      // home screen.
-      (navigator as { standalone?: boolean }).standalone
-    ) {
-      return;
-    }
+    // Defer the platform / dismissed detection so the setState happens
+    // outside the effect body — keeps React 19 happy and avoids the
+    // cascading-renders lint without an eslint-disable.
+    Promise.resolve().then(() => {
+      setIsStandalone(
+        window.matchMedia("(display-mode: standalone)").matches ||
+          (navigator as { standalone?: boolean }).standalone === true,
+      );
 
-    // Recently dismissed → don't pester.
-    const dismissedAt = Number(localStorage.getItem(DISMISSED_KEY) ?? 0);
-    if (dismissedAt && Date.now() - dismissedAt < DISMISS_FOR_MS) {
-      return;
-    }
+      const dismissedAt = Number(localStorage.getItem(DISMISSED_KEY) ?? 0);
+      if (dismissedAt && Date.now() - dismissedAt < DISMISS_FOR_MS) {
+        setDismissed(true);
+      }
+
+      setPlatform(detectPlatform());
+    });
 
     const onBeforeInstallPrompt = (event: Event) => {
+      // Stash the event so we can fire `.prompt()` from a click later.
+      // Without preventDefault, Chrome may show its own mini-infobar.
       event.preventDefault();
       setDeferredPrompt(event as BeforeInstallPromptEvent);
-      setVariant("native");
+    };
+    const onAppInstalled = () => {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
     };
 
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-
-    // iOS Safari: no beforeinstallprompt fires. Detect Safari on iOS/iPadOS
-    // and offer the manual flow. Done in a microtask so the setState
-    // happens after the effect commits (avoids the React 19 cascading-
-    // renders lint and matches what React wants effects to look like).
-    Promise.resolve().then(() => {
-      const ua = navigator.userAgent;
-      const isIosLike =
-        /iPad|iPhone|iPod/.test(ua) ||
-        // iPadOS reports as Mac with touch support
-        (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
-      const isSafari =
-        /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS/.test(ua);
-      if (isIosLike && isSafari) {
-        setVariant((prev) => (prev === "hidden" ? "ios" : prev));
-      }
-    });
-
+    window.addEventListener("appinstalled", onAppInstalled);
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
     };
   }, []);
 
-  function dismiss() {
-    localStorage.setItem(DISMISSED_KEY, String(Date.now()));
-    setVariant("hidden");
-    setDeferredPrompt(null);
-  }
-
-  async function handleInstallClick() {
-    if (variant === "ios") {
-      setShowIosSheet(true);
-      return;
-    }
-    if (!deferredPrompt) return;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    setDeferredPrompt(null);
-    if (outcome === "dismissed") {
-      // Treat as a soft dismiss so we don't immediately re-show on the
-      // next page load.
-      localStorage.setItem(DISMISSED_KEY, String(Date.now()));
-    }
-    setVariant("hidden");
-  }
-
-  if (variant === "hidden") return null;
+  const value = useMemo<InstallContextValue>(() => {
+    return {
+      isStandalone,
+      platform,
+      canPrompt: deferredPrompt != null,
+      dismissed,
+      dismiss: () => {
+        try {
+          localStorage.setItem(DISMISSED_KEY, String(Date.now()));
+        } catch {
+          /* private mode etc. — best effort */
+        }
+        setDismissed(true);
+      },
+      open: () => {
+        // Android / desktop Chrome path with a stashed prompt → fire it.
+        if (deferredPrompt) {
+          deferredPrompt
+            .prompt()
+            .then(() => deferredPrompt.userChoice)
+            .then(({ outcome }) => {
+              if (outcome === "dismissed") {
+                try {
+                  localStorage.setItem(DISMISSED_KEY, String(Date.now()));
+                } catch {
+                  /* ignore */
+                }
+                setDismissed(true);
+              }
+              setDeferredPrompt(null);
+            })
+            .catch(() => {
+              // The user closed the dialog or browser refused — fall back
+              // to the manual instructions so they're not stuck.
+              setDialogOpen(true);
+            });
+          return;
+        }
+        // No deferred prompt → show platform instructions.
+        setDialogOpen(true);
+      },
+    };
+  }, [deferredPrompt, dismissed, isStandalone, platform]);
 
   return (
-    <>
-      <div
-        className={cn(
-          // Sits just above the bottom tab bar (z-40) but below sheets/
-          // dialogs (z-50). On desktop it floats in the bottom-right.
-          "fixed inset-x-3 bottom-20 z-40 sm:right-4 sm:left-auto sm:max-w-sm",
-          "rounded-2xl border border-border bg-card text-card-foreground shadow-lg",
-          "p-3 pr-2",
-        )}
-        role="dialog"
-        aria-label="Install Potluck"
-      >
-        <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Download className="size-4" aria-hidden />
-          </div>
-          <div className="flex-1 text-sm">
-            <p className="font-semibold">Install Potluck</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Add to your home screen so recipes work offline in the kitchen.
-            </p>
-            <div className="mt-2 flex items-center gap-2">
-              <Button size="sm" onClick={handleInstallClick} className="h-8">
-                {variant === "ios" ? "How to install" : "Install"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={dismiss}
-                className="h-8 text-muted-foreground"
-              >
-                Not now
-              </Button>
-            </div>
-          </div>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            onClick={dismiss}
-            aria-label="Dismiss install prompt"
-            className="-mt-1"
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-      </div>
+    <InstallContext.Provider value={value}>
+      {children}
+      <InstallInstructionsDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        platform={platform}
+      />
+    </InstallContext.Provider>
+  );
+}
 
-      <Dialog open={showIosSheet} onOpenChange={setShowIosSheet}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Install Potluck on iPhone</DialogTitle>
-            <DialogDescription>
-              Safari doesn&apos;t have a one-tap install. Three quick steps:
-            </DialogDescription>
-          </DialogHeader>
-          <ol className="list-decimal space-y-3 pl-5 text-sm">
-            <li className="flex flex-col gap-1">
-              <span>
-                Tap the{" "}
-                <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 align-middle text-xs">
-                  <Share className="size-3.5" aria-hidden /> Share
-                </span>{" "}
-                button at the bottom of Safari.
-              </span>
-            </li>
-            <li className="flex flex-col gap-1">
-              <span>
-                Scroll down and choose{" "}
-                <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 align-middle text-xs">
-                  <Plus className="size-3.5" aria-hidden /> Add to Home Screen
-                </span>
-                .
-              </span>
-            </li>
-            <li>Tap <strong>Add</strong>. Potluck will live next to your other apps.</li>
-          </ol>
-          <DialogFooter>
-            <Button onClick={() => setShowIosSheet(false)}>Got it</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+function useInstallContext(): InstallContextValue {
+  const ctx = useContext(InstallContext);
+  if (!ctx) {
+    // Render-anywhere fallback: the install affordances become a no-op
+    // when the provider isn't mounted (e.g. on /signin, /offline) so
+    // nothing crashes if a future page forgets it.
+    return {
+      isStandalone: true,
+      platform: "other",
+      canPrompt: false,
+      dismissed: true,
+      open: () => {},
+      dismiss: () => {},
+    };
+  }
+  return ctx;
+}
+
+/**
+ * Floating banner above the bottom tab bar. Only shows when:
+ *   - not running standalone (i.e. not already installed), AND
+ *   - we have a deferred prompt to fire OR we're on iOS (instructions).
+ *
+ * For dev/desktop and Android-without-an-engagement-prompt we keep the
+ * floating banner quiet and rely on the menu entry — no point pestering
+ * the user with a banner that doesn't lead anywhere clean.
+ */
+export function InstallPromptBanner() {
+  const { isStandalone, platform, canPrompt, dismissed, open, dismiss } =
+    useInstallContext();
+
+  const showBanner =
+    !isStandalone && !dismissed && (canPrompt || platform === "ios");
+
+  if (!showBanner) return null;
+
+  return (
+    <div
+      className={cn(
+        "fixed inset-x-3 bottom-20 z-40 sm:right-4 sm:left-auto sm:max-w-sm",
+        "rounded-2xl border border-border bg-card text-card-foreground shadow-lg",
+        "p-3 pr-2",
+      )}
+      role="dialog"
+      aria-label="Install Potluck"
+    >
+      <div className="flex items-start gap-3">
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Download className="size-4" aria-hidden />
+        </div>
+        <div className="flex-1 text-sm">
+          <p className="font-semibold">Install Potluck</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Add to your home screen so recipes work offline in the kitchen.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <Button size="sm" onClick={open} className="h-8">
+              {canPrompt ? "Install" : "How to install"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={dismiss}
+              className="h-8 text-muted-foreground"
+            >
+              Not now
+            </Button>
+          </div>
+        </div>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          onClick={dismiss}
+          aria-label="Dismiss install prompt"
+          className="-mt-1"
+        >
+          <X className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Drop-in section for the account menu. Bundles its own separator so
+ * dropping it into a menu doesn't leave orphan dividers when the app
+ * is already installed (in which case the whole section disappears).
+ *
+ * Always shows the menu entry when the app isn't installed — even when
+ * Chrome hasn't fired the deferred prompt yet — because the click
+ * falls back to the platform instructions sheet.
+ */
+export function InstallMenuItem() {
+  const { isStandalone, canPrompt, open } = useInstallContext();
+  if (isStandalone) return null;
+  return (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        // Base UI's Menu fires onClick/onSelect from a non-button render
+        // tree, so a plain onClick is the simplest hook.
+        onClick={(e) => {
+          e.preventDefault();
+          open();
+        }}
+      >
+        <Download className="size-4 text-muted-foreground" aria-hidden />
+        <span className="flex-1">Install app</span>
+        {canPrompt && (
+          <span className="text-[10px] font-semibold tracking-wide text-primary uppercase">
+            Ready
+          </span>
+        )}
+      </DropdownMenuItem>
     </>
   );
+}
+
+/**
+ * Modal with platform-specific install instructions. Shown when the
+ * user explicitly asks "how do I install this?" and Chrome's deferred
+ * prompt isn't available (iOS Safari, low-engagement Android, dev mode
+ * over a tunnel, desktop Firefox, etc).
+ */
+function InstallInstructionsDialog({
+  open,
+  onOpenChange,
+  platform,
+}: {
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
+  platform: Platform;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Install Potluck</DialogTitle>
+          <DialogDescription>
+            Add Potluck to your home screen so recipes work offline and the
+            app opens without browser chrome.
+          </DialogDescription>
+        </DialogHeader>
+
+        {platform === "ios" ? <IosInstructions /> : null}
+        {platform === "android" ? <AndroidInstructions /> : null}
+        {(platform === "desktop" || platform === "other") && (
+          <DesktopInstructions />
+        )}
+
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Got it</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function IosInstructions() {
+  return (
+    <ol className="list-decimal space-y-3 pl-5 text-sm">
+      <li>
+        Tap the{" "}
+        <Chip>
+          <Share className="size-3.5" aria-hidden /> Share
+        </Chip>{" "}
+        button at the bottom of Safari.
+      </li>
+      <li>
+        Scroll down and choose{" "}
+        <Chip>
+          <Plus className="size-3.5" aria-hidden /> Add to Home Screen
+        </Chip>
+        .
+      </li>
+      <li>
+        Tap <strong>Add</strong>. Potluck will live next to your other apps.
+      </li>
+    </ol>
+  );
+}
+
+function AndroidInstructions() {
+  return (
+    <ol className="list-decimal space-y-3 pl-5 text-sm">
+      <li>
+        Tap the{" "}
+        <Chip>
+          <MoreVertical className="size-3.5" aria-hidden /> menu
+        </Chip>{" "}
+        button in the top-right of Chrome.
+      </li>
+      <li>
+        Choose <strong>Install app</strong> (or{" "}
+        <strong>Add to Home screen</strong> on older Chrome versions).
+      </li>
+      <li>
+        Confirm. Potluck will appear in your launcher just like a normal app.
+      </li>
+      <li className="text-muted-foreground">
+        If you don&apos;t see <em>Install app</em> in the menu, Chrome may
+        still be waiting for &ldquo;engagement&rdquo; — try opening a few
+        recipes and revisit this dialog.
+      </li>
+    </ol>
+  );
+}
+
+function DesktopInstructions() {
+  return (
+    <ol className="list-decimal space-y-3 pl-5 text-sm">
+      <li>
+        In Chrome / Edge: look for the{" "}
+        <Chip>
+          <Download className="size-3.5" aria-hidden /> install
+        </Chip>{" "}
+        icon at the right edge of the address bar.
+      </li>
+      <li>
+        Or open the browser menu and pick{" "}
+        <strong>Install Potluck&hellip;</strong>.
+      </li>
+      <li className="text-muted-foreground">
+        Firefox and Safari on macOS don&apos;t support installing web apps
+        from the URL bar.
+      </li>
+    </ol>
+  );
+}
+
+function Chip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 align-middle text-xs">
+      {children}
+    </span>
+  );
+}
+
+function detectPlatform(): Platform {
+  if (typeof navigator === "undefined") return "other";
+  const ua = navigator.userAgent;
+  const isIosLike =
+    /iPad|iPhone|iPod/.test(ua) ||
+    (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
+  if (isIosLike) return "ios";
+  if (/Android/i.test(ua)) return "android";
+  if (/Macintosh|Windows|Linux|CrOS/.test(ua)) return "desktop";
+  return "other";
 }
