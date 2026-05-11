@@ -15,9 +15,7 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = path.join(dataDir, "potluck.db");
 
 declare global {
-  // eslint-disable-next-line no-var
   var __potluckSqlite: Database.Database | undefined;
-  // eslint-disable-next-line no-var
   var __potluckDb: ReturnType<typeof drizzle<typeof schema>> | undefined;
 }
 

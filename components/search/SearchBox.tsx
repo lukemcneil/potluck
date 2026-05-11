@@ -41,7 +41,6 @@ export function SearchBox({
       setValue(fromUrl);
       lastPushed.current = fromUrl;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
   function pushQuery(next: string) {

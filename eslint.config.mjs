@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CommonJS preload helpers for tsx/node — `require()` is required
+    // here, so the project-wide TypeScript ESLint rules don't apply.
+    "scripts/_*.cjs",
   ]),
 ]);
 

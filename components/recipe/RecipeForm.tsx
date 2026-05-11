@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2, GripVertical, Loader2, Globe, Lock, EyeOff, X } from "lucide-react";
+import { Plus, Trash2, Loader2, Globe, Lock, EyeOff, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,9 +87,15 @@ export function RecipeForm(props: Props) {
   });
   const steps = useFieldArray({ control: form.control, name: "steps" });
 
-  const watchedDiets = form.watch("diets") ?? [];
-  const watchedTags = form.watch("tags") ?? [];
-  const watchedVisibility = form.watch("visibility");
+  // `useWatch` is the memoization-safe sibling of `form.watch()` —
+  // React Compiler refuses to memoize components that call `watch()`
+  // directly, so we route per-field subscriptions through `useWatch`.
+  const watchedDiets = useWatch({ control: form.control, name: "diets" }) ?? [];
+  const watchedTags = useWatch({ control: form.control, name: "tags" }) ?? [];
+  const watchedVisibility = useWatch({
+    control: form.control,
+    name: "visibility",
+  });
 
   const toggleDiet = (diet: string) => {
     const next = watchedDiets.includes(diet)
