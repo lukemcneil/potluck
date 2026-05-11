@@ -19,7 +19,7 @@
  * change to caching behavior. Old caches are deleted on `activate`.
  */
 
-const SW_VERSION = "v1";
+const SW_VERSION = "v2";
 const RUNTIME_CACHE = `potluck-runtime-${SW_VERSION}`;
 const PAGES_CACHE = `potluck-pages-${SW_VERSION}`;
 const PHOTOS_CACHE = `potluck-photos-${SW_VERSION}`;
@@ -151,6 +151,66 @@ async function networkFirst(request, cacheName) {
     throw err;
   }
 }
+
+/**
+ * Web Push event: a notification payload arrived from our server.
+ *
+ * Payload shape (see `lib/push/send.ts`):
+ *   { title, body, url, tag?, icon? }
+ *
+ * We render a single notification per event. `tag` lets the OS coalesce
+ * repeated alerts on the same resource (e.g. "5 new ratings" collapses
+ * to one banner).
+ */
+self.addEventListener("push", (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { title: "Potluck", body: event.data ? event.data.text() : "" };
+  }
+  const title = payload.title || "Potluck";
+  const options = {
+    body: payload.body || "",
+    icon: payload.icon || "/icons/icon-192.svg",
+    badge: "/icons/icon-192.svg",
+    tag: payload.tag || undefined,
+    data: { url: payload.url || "/feed" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/**
+ * Click on a notification: focus an open tab on the target URL when we
+ * have one, otherwise open a new window.
+ */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/feed";
+  event.waitUntil(
+    (async () => {
+      const allClients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      for (const client of allClients) {
+        const url = new URL(client.url);
+        if (url.pathname === targetUrl.split("#")[0] && "focus" in client) {
+          await client.focus();
+          if ("navigate" in client) {
+            try {
+              await client.navigate(targetUrl);
+            } catch {
+              /* ignore navigation rejections */
+            }
+          }
+          return;
+        }
+      }
+      await self.clients.openWindow(targetUrl);
+    })(),
+  );
+});
 
 /**
  * Pages get stale-while-revalidate semantics:

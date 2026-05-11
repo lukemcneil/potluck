@@ -11,6 +11,7 @@ import {
   saves,
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
+import { notifySaveForRecipeAuthor } from "@/lib/push/notify";
 
 type ActionResult = { ok: boolean; error?: string };
 
@@ -33,7 +34,12 @@ export async function saveRecipeAction(
   const userId = session.user.id;
 
   const recipe = db
-    .select({ id: recipes.id, visibility: recipes.visibility, authorId: recipes.authorId })
+    .select({
+      id: recipes.id,
+      visibility: recipes.visibility,
+      authorId: recipes.authorId,
+      title: recipes.title,
+    })
     .from(recipes)
     .where(eq(recipes.id, recipeId))
     .get();
@@ -41,6 +47,15 @@ export async function saveRecipeAction(
   if (recipe.visibility === "private" && recipe.authorId !== userId) {
     return { ok: false, error: "That recipe is private." };
   }
+
+  // Tell the author they got a new save — but only if this is the
+  // user's first save of this recipe. We check before the upsert so
+  // re-saves (collection edits) don't generate duplicate pings.
+  const wasAlreadySaved = !!db
+    .select({ userId: saves.userId })
+    .from(saves)
+    .where(and(eq(saves.userId, userId), eq(saves.recipeId, recipeId)))
+    .get();
 
   const allSavesId = ensureAllSavesCollection(userId);
 
@@ -88,6 +103,16 @@ export async function saveRecipeAction(
 
   revalidatePath("/cookbook");
   if (session.user.handle) revalidatePath(`/u/${session.user.handle}`);
+
+  if (!wasAlreadySaved && recipe.authorId !== userId) {
+    void notifySaveForRecipeAuthor({
+      recipeId,
+      authorId: recipe.authorId,
+      saverId: userId,
+      saverName: session.user.name ?? null,
+      recipeTitle: recipe.title,
+    });
+  }
   return { ok: true };
 }
 

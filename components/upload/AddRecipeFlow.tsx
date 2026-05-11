@@ -73,10 +73,23 @@ type RecipePrefill = {
   steps: Array<{ position: number; body: string }>;
 };
 
+/**
+ * Payload handed in from the Web Share Target (`/share-receive`)
+ * route. The page parses search params and forwards them here so the
+ * flow can skip the "choose" stage and jump straight into the right
+ * extractor.
+ */
+export type ShareIntent =
+  | { kind: "url"; url: string; title?: string | null }
+  | { kind: "photo-ids"; ids: string[]; title?: string | null }
+  | { kind: "text"; text?: string | null; title?: string | null };
+
 export function AddRecipeFlow({
   initialAiSpend = null,
+  initialShare = null,
 }: {
   initialAiSpend?: AiSpendSnapshot | null;
+  initialShare?: ShareIntent | null;
 }) {
   const [stage, setStage] = useState<Stage>({ kind: "choose" });
   const [extractError, setExtractError] = useState<string | null>(null);
@@ -100,6 +113,64 @@ export function AddRecipeFlow({
       cancelled = true;
     };
   }, []);
+
+  // Web Share Target hand-off: if the page seeded us with an intent,
+  // skip the choose tile and jump straight into the appropriate
+  // extractor. We only run this once per mount; the parent page is
+  // responsible for clearing the URL params after we navigate away
+  // (or simply leaving them be — the second mount sees them again
+  // but with the same id space, which is harmless).
+  useEffect(() => {
+    if (!initialShare) return;
+    if (initialShare.kind === "url") {
+      const u = initialShare.url.trim();
+      if (!u) return;
+      setUrlInput(u);
+      setTimeout(() => void startExtractionFromUrl(u), 0);
+      return;
+    }
+    if (initialShare.kind === "photo-ids" && initialShare.ids.length > 0) {
+      const ids = initialShare.ids;
+      void (async () => {
+        setStage({ kind: "extracting", photos: [] });
+        try {
+          const res = await fetch(
+            `/api/uploads/meta?ids=${encodeURIComponent(ids.join(","))}`,
+            { cache: "no-store" },
+          );
+          const body = (await res.json()) as {
+            files?: UploadedPhoto[];
+          };
+          const photos = body.files ?? [];
+          if (photos.length === 0) {
+            setExtractError(
+              "We couldn't find those shared photos — try sharing again.",
+            );
+            setStage({ kind: "photos", photos: [] });
+            return;
+          }
+          await startExtractionFromPhotos(photos);
+        } catch {
+          setExtractError(
+            "Couldn't load the shared photos. Try opening the share again.",
+          );
+          setStage({ kind: "photos", photos: [] });
+        }
+      })();
+      return;
+    }
+    if (initialShare.kind === "text") {
+      // Text-only share: drop into URL stage with text prefilled when
+      // it looks like a URL, otherwise just open the choose stage.
+      const text = initialShare.text?.trim() ?? "";
+      const urlMatch = text.match(/https?:\/\/[^\s<>"]+/i);
+      if (urlMatch) {
+        setUrlInput(urlMatch[0]);
+        setStage({ kind: "url" });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialShare]);
 
   function applySpendUpdate(spend: ExtractionSpend | null | undefined) {
     if (!spend) return;

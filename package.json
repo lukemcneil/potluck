@@ -19,7 +19,8 @@
     "db:inspect": "tsx scripts/inspect-db.ts",
     "db:seed": "tsx scripts/seed-recipes.ts",
     "dev:signin": "tsx scripts/dev-signin.ts",
-    "test:extract": "tsx -r ./scripts/_stub-server-only.cjs scripts/test-extract.ts"
+    "test:extract": "tsx -r ./scripts/_stub-server-only.cjs scripts/test-extract.ts",
+    "push:keys": "tsx scripts/generate-vapid.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.63",
