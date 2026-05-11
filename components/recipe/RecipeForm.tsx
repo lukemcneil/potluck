@@ -359,13 +359,25 @@ export function RecipeForm(props: Props) {
         </Field>
 
         <div>
-          <Label>Diets</Label>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <Label id="recipe-diets-label">Diets</Label>
+          {/*
+            Each chip is an independent toggle (you can pick any number),
+            so they're checkboxes rather than radios. Without role +
+            aria-checked screen readers just hear a row of unrelated
+            buttons with no on/off state.
+          */}
+          <div
+            role="group"
+            aria-labelledby="recipe-diets-label"
+            className="mt-2 flex flex-wrap gap-1.5"
+          >
             {KNOWN_DIETS.map((diet) => {
               const on = watchedDiets.includes(diet);
               return (
                 <button
                   type="button"
+                  role="checkbox"
+                  aria-checked={on}
                   key={diet}
                   onClick={() => toggleDiet(diet)}
                   className={cn(
