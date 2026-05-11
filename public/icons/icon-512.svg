@@ -1,7 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="100" fill="#C2462C"/>
-  <g fill="#FAF6EF" transform="translate(106 100)">
-    <path d="M150 0c29.823 0 54 24.177 54 54 0 11.928 3.625 23.011 9.835 32.205C227.534 107.756 236 132.555 236 159.388c0 19.388-4.69 37.683-12.987 53.808L213 217H77l-10.013-3.804C58.69 197.07 54 178.776 54 159.388c0-26.832 8.466-51.632 22.165-73.183C82.375 77.011 86 65.928 86 54 86 24.177 110.177 0 140 0z"/>
-    <rect x="50" y="227" width="190" height="86" rx="16"/>
+  <!--
+    Maskable variant for Android adaptive icons. Two key differences
+    from icon-192.svg:
+      - Background is full-bleed (no rounded corners). The OS clips
+        the canvas to whatever shape it likes (squircle, circle,
+        teardrop, …) so we hand it a solid rectangle to work with.
+      - Hat content is kept inside the maskable safe zone (centered
+        80% of the canvas, i.e. (51..461) on both axes) so it never
+        gets cropped by aggressive launcher masks.
+  -->
+  <rect width="512" height="512" fill="#C2462C"/>
+  <g fill="#FAF6EF">
+    <circle cx="160" cy="245" r="80"/>
+    <circle cx="352" cy="245" r="80"/>
+    <circle cx="256" cy="176" r="91"/>
+    <rect x="149" y="272" width="213" height="85"/>
+    <rect x="107" y="347" width="299" height="80" rx="27"/>
   </g>
 </svg>

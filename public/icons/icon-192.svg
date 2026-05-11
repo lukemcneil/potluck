@@ -1,7 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <!--
+    Brand mark: cream chef hat on terracotta. Built from filled circles
+    (puffy top), a stem, and a wider brim so the silhouette is clearly
+    a hat instead of the smooth dome the previous version had — that
+    one read as a chess bishop. This is the "any" purpose icon, so the
+    background gets a rounded square shape itself.
+  -->
   <rect width="192" height="192" rx="38" fill="#C2462C"/>
-  <g fill="#FAF6EF" transform="translate(40 38)">
-    <path d="M56 0c11.046 0 20 8.954 20 20 0 4.418 1.343 8.523 3.643 11.928C84.71 39.91 88 49.097 88 59c0 7.18-1.737 13.952-4.81 19.926L78 80h-44l-5.19-1.074C25.737 72.952 24 66.18 24 59c0-9.903 3.29-19.09 8.357-27.072C34.657 28.523 36 24.418 36 20 36 8.954 44.954 0 56 0z"/>
-    <rect x="22" y="84" width="68" height="32" rx="6"/>
+  <g fill="#FAF6EF">
+    <!-- Three overlapping circles form the puffy "cloud" top. -->
+    <circle cx="60" cy="92" r="30"/>
+    <circle cx="132" cy="92" r="30"/>
+    <circle cx="96" cy="66" r="34"/>
+    <!-- Stem connects the puff to the brim with no visible seam. -->
+    <rect x="56" y="102" width="80" height="32"/>
+    <!-- Brim is wider than the stem so the silhouette flares out. -->
+    <rect x="40" y="130" width="112" height="30" rx="10"/>
   </g>
 </svg>
