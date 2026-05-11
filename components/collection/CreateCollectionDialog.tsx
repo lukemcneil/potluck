@@ -111,14 +111,25 @@ export function CreateCollectionDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Visibility</Label>
-            <div className="grid grid-cols-3 gap-2">
+            <Label id="new-collection-visibility-label">Visibility</Label>
+            {/*
+              The three buttons act like a single-select radio group.
+              Without role+aria-checked, screen readers just hear three
+              unrelated buttons and can't tell which one is on.
+            */}
+            <div
+              role="radiogroup"
+              aria-labelledby="new-collection-visibility-label"
+              className="grid grid-cols-3 gap-2"
+            >
               {VISIBILITIES.map((v) => {
                 const selected = visibility === v.value;
                 return (
                   <button
                     key={v.value}
                     type="button"
+                    role="radio"
+                    aria-checked={selected}
                     onClick={() => setVisibility(v.value)}
                     className={cn(
                       "rounded-lg border p-2 text-left text-xs transition",

@@ -155,14 +155,25 @@ export function CollectionMenu({
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Visibility</Label>
-              <div className="grid grid-cols-3 gap-2">
+              <Label id="edit-collection-visibility-label">Visibility</Label>
+              {/*
+                Single-select toggle group — needs explicit radiogroup
+                semantics so screen readers know they're mutually
+                exclusive options rather than three separate buttons.
+              */}
+              <div
+                role="radiogroup"
+                aria-labelledby="edit-collection-visibility-label"
+                className="grid grid-cols-3 gap-2"
+              >
                 {VISIBILITIES.map((v) => {
                   const selected = visibility === v.value;
                   return (
                     <button
                       key={v.value}
                       type="button"
+                      role="radio"
+                      aria-checked={selected}
                       onClick={() => setVisibility(v.value)}
                       className={cn(
                         "rounded-lg border p-2 text-sm transition",
