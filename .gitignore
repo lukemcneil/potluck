@@ -43,4 +43,9 @@ next-env.d.ts
 
 # potluck local data: sqlite db + uploaded photos
 /data/
+# stray sqlite files at the repo root (e.g. opened from the IDE)
+/*.db
+/*.db-journal
+/*.db-wal
+/*.db-shm
 

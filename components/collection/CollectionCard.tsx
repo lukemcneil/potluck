@@ -19,9 +19,24 @@ export function CollectionCard({ collection, viewerHandle, className }: Props) {
   const handle = viewerHandle ?? collection.ownerHandle ?? null;
   const href = handle ? `/u/${handle}/c/${collection.slug}` : "#";
 
+  // Without an explicit label, the card's accessible name is the smushed
+  // concatenation of descendant text (e.g. "Test collection1 recipePublic").
+  // We synthesize a clean comma-separated label.
+  const recipeWord = collection.recipeCount === 1 ? "recipe" : "recipes";
+  const ariaLabel = [
+    collection.name,
+    `${collection.recipeCount} ${recipeWord}`,
+    collection.visibility === "public"
+      ? "public"
+      : collection.visibility === "unlisted"
+        ? "unlisted"
+        : "private",
+  ].join(", ");
+
   return (
     <Link
       href={href}
+      aria-label={ariaLabel}
       className={cn(
         "group flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition hover:shadow-md",
         className,

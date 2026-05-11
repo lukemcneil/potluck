@@ -12,11 +12,20 @@ type Props = {
 
 export function UserCard({ user, variant = "card", className }: Props) {
   const initial = (user.name ?? user.handle).charAt(0).toUpperCase();
+  // Synthesized accessible name so the card link doesn't announce as
+  // "Luke McNeil@luke-mcneil9 recipes" (each chunk concatenates from
+  // sibling spans). Visible markup is unchanged.
+  const recipeWord = user.recipeCount === 1 ? "recipe" : "recipes";
+  const ariaLabel = [
+    user.name ? `${user.name} (@${user.handle})` : `@${user.handle}`,
+    `${user.recipeCount} ${recipeWord}`,
+  ].join(", ");
 
   if (variant === "row") {
     return (
       <Link
         href={`/u/${user.handle}`}
+        aria-label={ariaLabel}
         className={cn(
           "flex items-center gap-3 rounded-xl border border-border bg-card p-3 transition hover:bg-muted",
           className,
@@ -54,6 +63,7 @@ export function UserCard({ user, variant = "card", className }: Props) {
   return (
     <Link
       href={`/u/${user.handle}`}
+      aria-label={ariaLabel}
       className={cn(
         "group flex flex-col items-center gap-2 rounded-2xl border border-border bg-card p-4 text-center transition hover:shadow-md",
         className,

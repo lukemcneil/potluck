@@ -41,9 +41,29 @@ type Props = {
 export function RecipeCard({ recipe, hideAuthor, priority, className }: Props) {
   const total = (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);
 
+  // The card is a single big <Link> wrapping a photo, badges, title, time,
+  // servings, cuisine, and an author chip. Screen readers compute the
+  // accessible name by smashing all the descendant text together, which
+  // produces noise like "dinnerMarry Me Chicken Orzo Bake4-5AmericanMby
+  // Meredith Crosier". Explicit aria-label keeps the announcement focused
+  // on the title with a short, comma-separated context tail.
+  const authorLabel =
+    !hideAuthor && recipe.author
+      ? `by ${recipe.author.name ?? `@${recipe.author.handle ?? ""}`}`
+      : null;
+  const ariaLabel = [
+    recipe.title,
+    authorLabel,
+    recipe.cuisine,
+    recipe.mealType,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   return (
     <Link
       href={`/r/${recipe.id}`}
+      aria-label={ariaLabel}
       className={cn(
         "group flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition hover:shadow-md",
         className,

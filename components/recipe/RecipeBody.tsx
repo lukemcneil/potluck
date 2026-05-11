@@ -123,10 +123,21 @@ export function RecipeBody({ ingredients, steps, servings }: Props) {
             <ol className="mt-3 space-y-4">
               {steps.map((s, i) => (
                 <li key={s.id} className="flex gap-4">
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                  {/*
+                    The number circle is decorative — it duplicates the
+                    list position, which the announced "Step N:" prefix
+                    below already conveys. Hiding it from a11y avoids
+                    "1Mix flour" smushed announcements from screen readers
+                    that concatenate sibling inline-flex children.
+                  */}
+                  <span
+                    aria-hidden="true"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
+                  >
                     {i + 1}
                   </span>
                   <p className="pt-0.5 text-sm leading-relaxed">
+                    <span className="sr-only">{`Step ${i + 1}: `}</span>
                     {scaled ? scaleStepText(s.body, factor) : s.body}
                   </p>
                 </li>

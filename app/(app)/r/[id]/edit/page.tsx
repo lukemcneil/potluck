@@ -83,7 +83,7 @@ export default async function EditRecipePage({
           Edit recipe
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Changes save instantly. The URL stays the same.
+          Tweak anything that&apos;s off, then save your changes.
         </p>
       </header>
 

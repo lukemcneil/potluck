@@ -190,9 +190,13 @@ export function SaveButton({
         <DialogTrigger className="hidden" />
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Save to your cookbook</DialogTitle>
+            <DialogTitle>
+              {saved ? "Manage cookbook" : "Save to your cookbook"}
+            </DialogTitle>
             <DialogDescription>
-              Pick the collections to add this recipe to.
+              {saved
+                ? "Add or remove this recipe from your collections."
+                : "Pick the collections to add this recipe to."}
             </DialogDescription>
           </DialogHeader>
 
@@ -203,6 +207,8 @@ export function SaveButton({
                 <li key={c.id}>
                   <button
                     type="button"
+                    role="checkbox"
+                    aria-checked={isOn}
                     onClick={() => toggleCollection(c.id)}
                     className={cn(
                       "flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-muted",
@@ -255,6 +261,7 @@ export function SaveButton({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
+                  aria-label="Cancel new collection"
                   onClick={() => {
                     setCreating(false);
                     setNewName("");
