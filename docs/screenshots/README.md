@@ -19,6 +19,14 @@ How to take them on the device-toolbar in DevTools:
 4. Crop to remove the URL bar / chrome and save as PNG into this
    folder.
 
-Resize each one to roughly 240px wide before committing — the README
-displays them inline at that size and you don't want a 5MB PNG in git.
-A 240×520 PNG should sit well under 100KB.
+Resize each one to a max width of ~760px before committing (≈3× the
+240px display width, so it still looks crisp on retina). The current
+PNGs hover around 40 KB each — well under the 100 KB budget.
+
+`scripts/crop-readme-screenshot.ts` does the crop + downscale in one
+shot if you've captured a full-page mobile screenshot already:
+
+```bash
+pnpm tsx scripts/crop-readme-screenshot.ts \
+  /tmp/feed-full.png docs/screenshots/feed-mobile.png 1600
+```
