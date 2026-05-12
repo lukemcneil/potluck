@@ -1,7 +1,8 @@
 import "server-only";
 
-import { generateObject } from "ai";
+import { generateObject, type UserContent } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { google } from "@ai-sdk/google";
 
 import {
   extractedRecipeSchema,
@@ -11,6 +12,10 @@ import {
 import { storage } from "@/lib/storage";
 import { computeCost, formatUsd, type CostBreakdown } from "@/lib/ai/pricing";
 import { fetchRecipePage } from "@/lib/recipe-import/fetch";
+import {
+  diffExtractions,
+  type Discrepancy,
+} from "@/lib/ai/discrepancies";
 
 export type ExtractOk = {
   kind: "ok";
@@ -24,14 +29,77 @@ export type ExtractNoRecipe = {
 };
 export type ExtractResult = ExtractOk | ExtractNoRecipe;
 
-// Image extraction needs vision and benefits from gpt-4o's stronger
-// OCR / layout understanding. URL extraction is just text on text, so
-// gpt-4o-mini is ~17x cheaper and good enough.
-export const IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
-export const URL_MODEL = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
+/**
+ * Result of {@link extractAndVerifyRecipe}: the primary extraction
+ * plus a deterministic diff against an independent second pass over
+ * the same source. Use this from the API route — `cost` is the SUM of
+ * both passes so the caller can charge / cap on a single number.
+ *
+ * `verificationFailed` means the second pass errored or timed out and
+ * we fell back to a no-discrepancies result. The UI surfaces a
+ * "verification unavailable" banner so importers know the safety net
+ * isn't there for this one.
+ */
+export type ExtractWithVerificationResult = ExtractResult & {
+  discrepancies: Discrepancy[];
+  primaryCost: CostBreakdown;
+  verificationCost: CostBreakdown | null;
+  verificationFailed: boolean;
+};
 
-function defaultModelFor(kind: ExtractInput["kind"]): string {
-  return kind === "url" ? URL_MODEL : IMAGE_MODEL;
+// AI provider selection. `google` (default) uses Gemini Flash, which
+// has a real free tier and is great for both vision and text — no
+// credit card required if you stay inside the free quota. `openai` is
+// retained as a paid alternative; set AI_PROVIDER=openai if you have
+// reasons to prefer it.
+//
+// Each provider has independent image/url model env overrides so you
+// can use a fancier model for vision without changing the URL path.
+export type AiProvider = "openai" | "google";
+
+export function aiProvider(): AiProvider {
+  const v = (process.env.AI_PROVIDER ?? "google").toLowerCase();
+  return v === "openai" ? "openai" : "google";
+}
+
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
+const OPENAI_URL_MODEL_DEFAULT = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
+const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.0-flash";
+const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.0-flash";
+
+/**
+ * Cheaper text-only model used for the soft-cap downgrade in
+ * /api/extract (image extraction routes to this when the user is
+ * over ~⅔ of their monthly USD cap).
+ */
+export const URL_MODEL =
+  aiProvider() === "openai" ? OPENAI_URL_MODEL_DEFAULT : GOOGLE_URL_MODEL;
+
+function defaultModelFor(
+  provider: AiProvider,
+  kind: ExtractInput["kind"],
+): string {
+  if (provider === "openai") {
+    return kind === "url" ? OPENAI_URL_MODEL_DEFAULT : OPENAI_IMAGE_MODEL;
+  }
+  return kind === "url" ? GOOGLE_URL_MODEL : GOOGLE_IMAGE_MODEL;
+}
+
+function modelHandle(provider: AiProvider, modelId: string) {
+  return provider === "openai" ? openai(modelId) : google(modelId);
+}
+
+function ensureApiKey(provider: AiProvider) {
+  if (provider === "openai" && !process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Either set AI_PROVIDER=google and add a free GOOGLE_GENERATIVE_AI_API_KEY, or add an OPENAI_API_KEY to .env.local.",
+    );
+  }
+  if (provider === "google" && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    throw new Error(
+      "GOOGLE_GENERATIVE_AI_API_KEY is not set. Get one free (no credit card) at https://aistudio.google.com/apikey and add it to .env.local.",
+    );
+  }
 }
 
 // We don't trust the model to actually browse, so for URL imports we
@@ -92,7 +160,180 @@ export async function extractRecipe(
     );
   }
 
-  const userParts = await buildUserContent(input);
+  const userParts = await buildExtractUserContent(input);
+  const model = options.modelOverride ?? defaultModelFor(input.kind);
+  return runExtraction(userParts, model, input);
+}
+
+/**
+ * Verification-aware orchestrator: runs the primary extraction and a
+ * second independent extraction in parallel against the same prepared
+ * source content, then aligns the two with `diffExtractions`. Returns
+ * the primary result enriched with a typed `discrepancies` list and
+ * the SUM of both calls' cost.
+ *
+ * The verification pass always uses {@link URL_MODEL} (gpt-4o-mini)
+ * because:
+ * (a) it's ~17x cheaper than gpt-4o, so even on image imports we
+ *     barely move the needle,
+ * (b) using a different model than the primary makes it more likely
+ *     to "see" the source independently rather than parrot the
+ *     primary's biases,
+ * (c) for URL imports the primary is already mini, so we get free
+ *     stochastic independence from the API.
+ *
+ * Soft-fails on verification errors / timeouts / no-recipe — the
+ * primary result still ships, just with `verificationFailed: true` and
+ * an empty `discrepancies` array. We never block an import on a flaky
+ * second pass.
+ */
+const VERIFICATION_TIMEOUT_MS = 10_000;
+
+export async function extractAndVerifyRecipe(
+  input: ExtractInput,
+  options: { modelOverride?: string } = {},
+): Promise<ExtractWithVerificationResult> {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "OPENAI_API_KEY is not set. Add it to .env.local before using recipe extraction.",
+    );
+  }
+
+  // Build the user content ONCE so we don't double-fetch the URL or
+  // re-base64 the same image bytes twice.
+  const userParts = await buildExtractUserContent(input);
+  const primaryModel = options.modelOverride ?? defaultModelFor(input.kind);
+  const verifyModel = URL_MODEL;
+
+  const primaryPromise = runExtraction(userParts, primaryModel, input);
+  // Race the verification call against a hard timeout so a slow second
+  // pass can't hold the whole import hostage.
+  const verifyPromise = withTimeout(
+    runExtraction(userParts, verifyModel, input).catch(
+      (err): ExtractResult & { __failed: true } => ({
+        kind: "no-recipe",
+        reason: err instanceof Error ? err.message : String(err),
+        cost: zeroCost(verifyModel),
+        __failed: true,
+      }),
+    ),
+    VERIFICATION_TIMEOUT_MS,
+  );
+
+  const [primary, verifyOrTimeout] = await Promise.all([
+    primaryPromise,
+    verifyPromise,
+  ]);
+
+  // Verification soft-fail cases:
+  //  1. timeout   -> verifyOrTimeout === TIMEOUT_SENTINEL
+  //  2. throw     -> __failed: true (cost is zero — we never heard back)
+  //  3. no-recipe -> verification disagreed about whether it's a recipe
+  //                  at all; we don't know who's right, so don't block.
+  let verifyResult: ExtractResult | null = null;
+  let verifyFailed = false;
+  let verifyCost: CostBreakdown | null = null;
+
+  if (verifyOrTimeout === TIMEOUT_SENTINEL) {
+    verifyFailed = true;
+  } else if ("__failed" in verifyOrTimeout) {
+    verifyFailed = true;
+  } else {
+    verifyResult = verifyOrTimeout;
+    verifyCost = verifyOrTimeout.cost;
+    if (verifyOrTimeout.kind !== "ok") {
+      // Treat as soft-fail rather than emitting "everything is missing"
+      // discrepancies — the second pass might just be wrong.
+      verifyFailed = true;
+    }
+  }
+
+  const discrepancies: Discrepancy[] =
+    primary.kind === "ok" && verifyResult?.kind === "ok"
+      ? diffExtractions(primary.recipe, verifyResult.recipe)
+      : [];
+
+  const totalCost = sumCost(primary.cost, verifyCost);
+
+  if (primary.kind === "no-recipe") {
+    return {
+      ...primary,
+      cost: totalCost,
+      primaryCost: primary.cost,
+      verificationCost: verifyCost,
+      verificationFailed: verifyFailed,
+      discrepancies: [],
+    };
+  }
+
+  return {
+    ...primary,
+    cost: totalCost,
+    primaryCost: primary.cost,
+    verificationCost: verifyCost,
+    verificationFailed: verifyFailed,
+    discrepancies,
+  };
+}
+
+const TIMEOUT_SENTINEL = Symbol("verification-timeout");
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | typeof TIMEOUT_SENTINEL> {
+  return Promise.race([
+    promise,
+    new Promise<typeof TIMEOUT_SENTINEL>((resolve) =>
+      setTimeout(() => resolve(TIMEOUT_SENTINEL), ms),
+    ),
+  ]);
+}
+
+function zeroCost(modelId: string): CostBreakdown {
+  return {
+    modelId,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    billedInputTokens: 0,
+    inputCost: 0,
+    cachedInputCost: 0,
+    outputCost: 0,
+    totalCost: 0,
+  };
+}
+
+function sumCost(
+  a: CostBreakdown,
+  b: CostBreakdown | null,
+): CostBreakdown {
+  if (!b) return a;
+  return {
+    // Reporting the primary's modelId — it's what determined the
+    // recipe quality. The verification pass is an internal cost.
+    modelId: a.modelId,
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    billedInputTokens: a.billedInputTokens + b.billedInputTokens,
+    inputCost: a.inputCost + b.inputCost,
+    cachedInputCost: a.cachedInputCost + b.cachedInputCost,
+    outputCost: a.outputCost + b.outputCost,
+    totalCost: a.totalCost + b.totalCost,
+  };
+}
+
+/**
+ * Single LLM call against an already-built user content payload. Pulled
+ * out of `extractRecipe` so {@link extractAndVerifyRecipe} can run two
+ * calls (primary + verification) over the same prepared payload.
+ */
+async function runExtraction(
+  userParts: UserContent,
+  model: string,
+  input: ExtractInput,
+): Promise<ExtractResult> {
   const imageCount =
     input.kind === "imageIds"
       ? input.imageIds.length
@@ -100,7 +341,6 @@ export async function extractRecipe(
         ? input.imageDataUrls.length
         : 0;
 
-  const model = options.modelOverride ?? defaultModelFor(input.kind);
   const startedAt = Date.now();
   const { object, usage } = await generateObject({
     model: openai(model),
@@ -116,10 +356,6 @@ export async function extractRecipe(
     cachedInputTokens: usage.cachedInputTokens,
   });
 
-  // The model can either say "this isn't a recipe" via the discriminator
-  // or, occasionally, claim it's a recipe but produce an empty/sparse
-  // body. Treat both as no-recipe so the caller has a single failure
-  // mode to handle.
   const looksEmpty =
     !object.title.trim() ||
     object.ingredients.length === 0 ||
@@ -144,10 +380,6 @@ export async function extractRecipe(
     return { kind: "no-recipe", reason, cost };
   }
 
-  // Re-validate against the stricter content schema. If this throws
-  // it means the model claimed `notARecipe=false` AND filled in
-  // title/ingredients/steps, but something else (e.g. a 0-character
-  // ingredient name) tripped a constraint — treat it as no-recipe.
   const parsed = extractedRecipeSchema.safeParse({
     title: object.title,
     description: object.description,
@@ -161,10 +393,9 @@ export async function extractRecipe(
     suggestedDiets: object.suggestedDiets,
     suggestedTags: object.suggestedTags,
   });
-  // `looksEmpty` already filtered out the case where the model returned
-  // 0 ingredients/steps, so any safeParse failure here is a malformed
-  // payload (e.g. the model put a 0-length ingredient name through). We
-  // surface it as no-recipe rather than crashing the import.
+  // `looksEmpty` already filtered out the empty case, so any safeParse
+  // failure here is a malformed payload (e.g. a 0-length ingredient
+  // name) — surface as no-recipe rather than crash.
   if (!parsed.success) {
     return {
       kind: "no-recipe",
@@ -175,7 +406,15 @@ export async function extractRecipe(
   return { kind: "ok", recipe: parsed.data, cost };
 }
 
-async function buildUserContent(input: ExtractInput) {
+/**
+ * Build the user-message content (text + optional image data URLs)
+ * from a raw `ExtractInput`. Exposed so the verification orchestrator
+ * can run two LLM calls against the same prepared payload without
+ * re-fetching the URL or re-encoding image bytes.
+ */
+export async function buildExtractUserContent(
+  input: ExtractInput,
+): Promise<UserContent> {
   if (input.kind === "url") {
     const page = await fetchRecipePage(input.url);
     const html = trimHtmlForLlm(page.html);

@@ -23,6 +23,7 @@
     "push:keys": "tsx scripts/generate-vapid.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.72",
     "@ai-sdk/openai": "^3.0.63",
     "@auth/drizzle-adapter": "^1.11.2",
     "@base-ui/react": "1.4.1",

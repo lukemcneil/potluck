@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { extractRecipe, URL_MODEL } from "@/lib/ai/extract-recipe";
+import {
+  extractAndVerifyRecipe,
+  URL_MODEL,
+} from "@/lib/ai/extract-recipe";
 import {
   monthlySpendForUser,
   recordAiUsage,
@@ -83,11 +86,14 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await extractRecipe(parsed.data, { modelOverride });
+    const result = await extractAndVerifyRecipe(parsed.data, {
+      modelOverride,
+    });
 
     // Persist usage so we can bill / cap reliably. We do this even
     // when the model said "no recipe" — the call still burned tokens.
-    // Best-effort; if it fails we still return the result.
+    // `result.cost` is the SUM of both passes so a single record covers
+    // both billings.
     await recordAiUsage({
       userId,
       model: result.cost.modelId,
@@ -125,6 +131,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       recipe: result.recipe,
+      discrepancies: result.discrepancies,
+      verificationFailed: result.verificationFailed,
       cost: costPayload,
       spend: spendPayload,
     });
