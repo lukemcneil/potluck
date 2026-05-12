@@ -590,6 +590,6 @@ function prefillFromExtraction(r: ExtractedRecipe): Partial<RecipePrefill> {
       name: ing.name,
       note: ing.note ?? null,
     })),
-    steps: r.steps.map((body, i) => ({ position: i, body })),
+    steps: r.steps.map((s, i) => ({ position: i, body: s.body })),
   };
 }

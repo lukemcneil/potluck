@@ -65,6 +65,13 @@ export type RecipeFormOutput = z.output<typeof recipeFormSchema>;
 // allowed to be empty (no `min(1)`) — we just throw them away. When
 // `notARecipe=false`, we re-validate against the stricter content
 // schema in code (see `extractRecipe()`).
+// Per-field confidence the model returns alongside each ingredient and
+// step. `low` means the model wasn't sure about something (smudged
+// photo, ambiguous unit, partial OCR, etc.) and the review-step UI
+// should force the user to confirm or edit before saving.
+export const confidenceSchema = z.enum(["high", "low"]);
+export type Confidence = z.infer<typeof confidenceSchema>;
+
 export const extractedRecipeWireSchema = z.object({
   notARecipe: z.boolean(),
   reason: z.string().trim().max(500).nullable(),
@@ -77,10 +84,18 @@ export const extractedRecipeWireSchema = z.object({
         unit: z.string().trim().max(40).nullable(),
         name: z.string().trim().max(120),
         note: z.string().trim().max(200).nullable(),
+        confidence: confidenceSchema,
       }),
     )
     .max(80),
-  steps: z.array(z.string().trim().max(2000)).max(60),
+  steps: z
+    .array(
+      z.object({
+        body: z.string().trim().max(2000),
+        confidence: confidenceSchema,
+      }),
+    )
+    .max(60),
   prepMinutes: z.number().int().min(0).max(60 * 24).nullable(),
   cookMinutes: z.number().int().min(0).max(60 * 24).nullable(),
   servings: z.string().trim().max(40).nullable(),
@@ -106,11 +121,20 @@ export const extractedRecipeSchema = z.object({
         unit: z.string().trim().max(40).nullable(),
         name: z.string().trim().min(1).max(120),
         note: z.string().trim().max(200).nullable(),
+        confidence: confidenceSchema,
       }),
     )
     .min(1, "Recipe must have at least one ingredient")
     .max(80),
-  steps: z.array(z.string().trim().min(1).max(2000)).min(1).max(60),
+  steps: z
+    .array(
+      z.object({
+        body: z.string().trim().min(1).max(2000),
+        confidence: confidenceSchema,
+      }),
+    )
+    .min(1)
+    .max(60),
   prepMinutes: z.number().int().min(0).max(60 * 24).nullable(),
   cookMinutes: z.number().int().min(0).max(60 * 24).nullable(),
   servings: z.string().trim().max(40).nullable(),
@@ -120,6 +144,8 @@ export const extractedRecipeSchema = z.object({
   suggestedTags: z.array(z.string().trim().max(40)).max(10),
 });
 export type ExtractedRecipe = z.infer<typeof extractedRecipeSchema>;
+export type ExtractedIngredient = ExtractedRecipe["ingredients"][number];
+export type ExtractedStep = ExtractedRecipe["steps"][number];
 
 export const collectionFormSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),

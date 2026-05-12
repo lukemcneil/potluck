@@ -151,7 +151,9 @@ async function main() {
     console.log(`  • ${head ? `${head} ` : ""}${ing.name}${note}`);
   }
   console.log("\n---- STEPS ----");
-  recipe.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+  recipe.steps.forEach((s, i) =>
+    console.log(`  ${i + 1}. [${s.confidence}] ${s.body}`),
+  );
 
   // Sanity-check: a synthetic recipe card mentions "Roasted Tomato Soup"
   // by design. Surface a friendly pass/fail indicator without being
@@ -216,7 +218,9 @@ async function runUrlMode(url: string) {
     console.log(`  • ${head ? `${head} ` : ""}${ing.name}${note}`);
   }
   console.log("\n---- STEPS ----");
-  recipe.steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+  recipe.steps.forEach((s, i) =>
+    console.log(`  ${i + 1}. [${s.confidence}] ${s.body}`),
+  );
 }
 
 /**

@@ -58,7 +58,12 @@ When a recipe IS present:
 - For mealType, choose ONE of: breakfast, brunch, lunch, dinner, appetizer, side, dessert, snack, drink.
 - Cuisine should be a short common label like "italian" or "thai" if obvious; otherwise null.
 - For diets, only include labels you can confidently infer: vegetarian, vegan, gluten-free, dairy-free, nut-free, keto, paleo, low-carb, pescatarian.
-- Tags are 1-2 word lowercase descriptors useful for filtering (e.g. "weeknight", "one-pan", "make-ahead").`;
+- Tags are 1-2 word lowercase descriptors useful for filtering (e.g. "weeknight", "one-pan", "make-ahead").
+
+CONFIDENCE (per ingredient and per step):
+- Mark "confidence": "low" when ANY of: the source text is smudged, partially cropped, ambiguous, hard to read, abbreviated in a way that could mean two units (e.g. "T" for tbsp vs tsp), or when you had to guess between two plausible readings. The reviewer will be forced to confirm "low" rows before saving.
+- Mark "confidence": "high" only when the field is unambiguous in the source.
+- When in doubt, mark "low". Over-flagging is cheap; under-flagging means a mistake gets cooked.`;
 
 export type ExtractInput =
   | { kind: "imageIds"; imageIds: string[] }
@@ -156,6 +161,10 @@ export async function extractRecipe(
     suggestedDiets: object.suggestedDiets,
     suggestedTags: object.suggestedTags,
   });
+  // `looksEmpty` already filtered out the case where the model returned
+  // 0 ingredients/steps, so any safeParse failure here is a malformed
+  // payload (e.g. the model put a 0-length ingredient name through). We
+  // surface it as no-recipe rather than crashing the import.
   if (!parsed.success) {
     return {
       kind: "no-recipe",
