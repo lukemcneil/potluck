@@ -64,8 +64,11 @@ export function aiProvider(): AiProvider {
 
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 const OPENAI_URL_MODEL_DEFAULT = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
-const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.0-flash";
-const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.0-flash";
+// `gemini-2.5-flash` is the current "fast + smart + free tier"
+// workhorse. `gemini-2.0-flash` is older and on some accounts has its
+// free-tier quota set to 0 — switching to 2.5 avoids that footgun.
+const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
+const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
 
 /**
  * Cheaper text-only model used for the soft-cap downgrade in
@@ -154,14 +157,11 @@ export async function extractRecipe(
   input: ExtractInput,
   options: { modelOverride?: string } = {},
 ): Promise<ExtractResult> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error(
-      "OPENAI_API_KEY is not set. Add it to .env.local before using recipe extraction.",
-    );
-  }
+  const provider = aiProvider();
+  ensureApiKey(provider);
 
   const userParts = await buildExtractUserContent(input);
-  const model = options.modelOverride ?? defaultModelFor(input.kind);
+  const model = options.modelOverride ?? defaultModelFor(provider, input.kind);
   return runExtraction(userParts, model, input);
 }
 
@@ -193,16 +193,14 @@ export async function extractAndVerifyRecipe(
   input: ExtractInput,
   options: { modelOverride?: string } = {},
 ): Promise<ExtractWithVerificationResult> {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error(
-      "OPENAI_API_KEY is not set. Add it to .env.local before using recipe extraction.",
-    );
-  }
+  const provider = aiProvider();
+  ensureApiKey(provider);
 
   // Build the user content ONCE so we don't double-fetch the URL or
   // re-base64 the same image bytes twice.
   const userParts = await buildExtractUserContent(input);
-  const primaryModel = options.modelOverride ?? defaultModelFor(input.kind);
+  const primaryModel =
+    options.modelOverride ?? defaultModelFor(provider, input.kind);
   const verifyModel = URL_MODEL;
 
   const primaryPromise = runExtraction(userParts, primaryModel, input);
@@ -341,9 +339,10 @@ async function runExtraction(
         ? input.imageDataUrls.length
         : 0;
 
+  const provider = aiProvider();
   const startedAt = Date.now();
   const { object, usage } = await generateObject({
-    model: openai(model),
+    model: modelHandle(provider, model),
     schema: extractedRecipeWireSchema,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userParts }],
@@ -364,7 +363,7 @@ async function runExtraction(
   const outcome = isNoRecipe ? "no-recipe" : "ok";
 
   console.log(
-    `[ai.extract] model=${model} kind=${input.kind} images=${imageCount} ` +
+    `[ai.extract] provider=${provider} model=${model} kind=${input.kind} images=${imageCount} ` +
       `outcome=${outcome} ` +
       `tokens=${cost.inputTokens}+${cost.outputTokens}=${cost.inputTokens + cost.outputTokens} ` +
       `cached=${cost.cachedInputTokens} cost=${formatUsd(cost.totalCost)} ` +

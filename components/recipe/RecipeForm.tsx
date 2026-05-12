@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Plus, Trash2, Loader2, Globe, Lock, EyeOff, X } from "lucide-react";
@@ -24,18 +24,45 @@ import {
 } from "@/lib/actions/recipes";
 import type { UploadedPhoto } from "@/components/upload/PhotoPicker";
 import { PhotoPicker } from "@/components/upload/PhotoPicker";
+import {
+  ingredientNeedsReview,
+  stepNeedsReview,
+  type IngredientFlag,
+  type StepFlag,
+} from "@/lib/ai/review";
+import { ReviewStrip } from "@/components/recipe/ReviewStrip";
+import {
+  ReviewSourcePane,
+  type ReviewSource,
+} from "@/components/recipe/ReviewSourcePane";
+
+/**
+ * Verification payload handed in by the AI-import flow. Each
+ * `*Flags` array runs PARALLEL to the matching `initial.ingredients` /
+ * `initial.steps` array — index N's flag belongs to row N at first
+ * render. Once `useFieldArray` has run we re-key by stable row id so
+ * the linkage survives reorders/inserts.
+ */
+export type RecipeFormVerification = {
+  ingredientFlags: IngredientFlag[];
+  stepFlags: StepFlag[];
+  verificationFailed: boolean;
+  source?: ReviewSource;
+};
 
 type Props =
   | {
       mode?: "create";
       initial?: Partial<RecipeFormInput>;
       initialPhotos?: UploadedPhoto[];
+      verification?: RecipeFormVerification | null;
     }
   | {
       mode: "edit";
       recipeId: string;
       initial?: Partial<RecipeFormInput>;
       initialPhotos?: UploadedPhoto[];
+      verification?: RecipeFormVerification | null;
     };
 
 const DEFAULTS: RecipeFormInput = {
@@ -60,6 +87,7 @@ export function RecipeForm(props: Props) {
   const mode = props.mode ?? "create";
   const initial = props.initial;
   const initialPhotos = props.initialPhotos ?? [];
+  const verification = props.verification ?? null;
 
   const [photos, setPhotos] = useState<UploadedPhoto[]>(initialPhotos);
   const [tagInput, setTagInput] = useState("");
@@ -86,6 +114,64 @@ export function RecipeForm(props: Props) {
     name: "ingredients",
   });
   const steps = useFieldArray({ control: form.control, name: "steps" });
+
+  // === Review state =====================================================
+  // The verification payload's flag arrays are POSITIONAL, but RHF can
+  // reorder/insert/remove rows. We re-key the maps by the stable
+  // `field.id` on the FIRST render, then track resolution by id from
+  // there. Mutating refs during render is the official lazy-init
+  // pattern (see React's `useRef` docs) — this runs exactly once per
+  // mount because we guard on `flagsByIdRef.current`.
+  const flagsByIdRef = useRef<{
+    ingredient: Map<string, IngredientFlag>;
+    step: Map<string, StepFlag>;
+  } | null>(null);
+  if (verification && flagsByIdRef.current == null) {
+    const ingMap = new Map<string, IngredientFlag>();
+    ingredients.fields.forEach((f, i) => {
+      const flag = verification.ingredientFlags[i];
+      if (flag) ingMap.set(f.id, flag);
+    });
+    const stepMap = new Map<string, StepFlag>();
+    steps.fields.forEach((f, i) => {
+      const flag = verification.stepFlags[i];
+      if (flag) stepMap.set(f.id, flag);
+    });
+    flagsByIdRef.current = { ingredient: ingMap, step: stepMap };
+  }
+
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  const markResolved = (id: string) => {
+    setResolvedIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+
+  const ingredientFlagFor = (rowId: string): IngredientFlag | undefined =>
+    flagsByIdRef.current?.ingredient.get(rowId);
+  const stepFlagFor = (rowId: string): StepFlag | undefined =>
+    flagsByIdRef.current?.step.get(rowId);
+
+  const ingredientUnresolved = (rowId: string): boolean => {
+    if (resolvedIds.has(rowId)) return false;
+    const f = ingredientFlagFor(rowId);
+    return !!f && ingredientNeedsReview(f);
+  };
+  const stepUnresolved = (rowId: string): boolean => {
+    if (resolvedIds.has(rowId)) return false;
+    const f = stepFlagFor(rowId);
+    return !!f && stepNeedsReview(f);
+  };
+
+  // Counted on every render — the math is cheap and stays consistent
+  // with whatever fields/resolved state currently exist.
+  const unresolvedCount =
+    ingredients.fields.filter((f) => ingredientUnresolved(f.id)).length +
+    steps.fields.filter((f) => stepUnresolved(f.id)).length;
+  const blockSave = verification != null && unresolvedCount > 0;
 
   // `useWatch` is the memoization-safe sibling of `form.watch()` —
   // React Compiler refuses to memoize components that call `watch()`
@@ -156,6 +242,19 @@ export function RecipeForm(props: Props) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-8">
+      {verification?.source && <ReviewSourcePane source={verification.source} />}
+
+      {verification?.verificationFailed && (
+        <p
+          className="rounded-md border border-amber-300/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100"
+          data-print="hide"
+        >
+          We couldn&apos;t double-check this extraction (verification pass
+          unavailable). Please look the recipe over carefully before saving —
+          quantities and units especially.
+        </p>
+      )}
+
       <section>
         <h2 className="font-display text-lg font-semibold">Photos</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
@@ -250,49 +349,91 @@ export function RecipeForm(props: Props) {
         </div>
 
         <ul className="space-y-2">
-          {ingredients.fields.map((field, i) => (
-            <li key={field.id} className="grid grid-cols-12 gap-2">
-              <div className="col-span-2">
-                <Input
-                  {...form.register(`ingredients.${i}.quantity`)}
-                  placeholder="1 1/2"
-                  aria-label="Quantity"
-                />
-              </div>
-              <div className="col-span-3">
-                <Input
-                  {...form.register(`ingredients.${i}.unit`)}
-                  placeholder="cups"
-                  aria-label="Unit"
-                />
-              </div>
-              <div className="col-span-6">
-                <Input
-                  {...form.register(`ingredients.${i}.name`)}
-                  placeholder="all-purpose flour"
-                  aria-label="Name"
-                />
-              </div>
-              <div className="col-span-1 flex">
-                <button
-                  type="button"
-                  onClick={() => ingredients.remove(i)}
-                  aria-label="Remove ingredient"
-                  className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-              <div className="col-span-12">
-                <Input
-                  {...form.register(`ingredients.${i}.note`)}
-                  placeholder="optional note (sifted, melted, etc.)"
-                  aria-label="Note"
-                  className="text-xs"
-                />
-              </div>
-            </li>
-          ))}
+          {ingredients.fields.map((field, i) => {
+            const flag = ingredientFlagFor(field.id);
+            const showStrip = flag && ingredientUnresolved(field.id);
+            return (
+              <li
+                key={field.id}
+                className={cn(
+                  "space-y-2",
+                  showStrip &&
+                    "rounded-lg border border-amber-300/40 bg-amber-50/40 p-2 dark:bg-amber-300/5",
+                )}
+              >
+                {showStrip && (
+                  <IngredientReviewStrip
+                    flag={flag}
+                    current={
+                      form.getValues(`ingredients.${i}`) ?? {
+                        name: "",
+                        quantity: null,
+                        unit: null,
+                      }
+                    }
+                    onResolve={() => markResolved(field.id)}
+                    onPickCheck={(updates) => {
+                      if (updates.quantity !== undefined) {
+                        form.setValue(
+                          `ingredients.${i}.quantity`,
+                          updates.quantity,
+                          { shouldDirty: true },
+                        );
+                      }
+                      if (updates.unit !== undefined) {
+                        form.setValue(`ingredients.${i}.unit`, updates.unit, {
+                          shouldDirty: true,
+                        });
+                      }
+                      markResolved(field.id);
+                    }}
+                    onRemove={() => ingredients.remove(i)}
+                  />
+                )}
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-2">
+                    <Input
+                      {...form.register(`ingredients.${i}.quantity`)}
+                      placeholder="1 1/2"
+                      aria-label="Quantity"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <Input
+                      {...form.register(`ingredients.${i}.unit`)}
+                      placeholder="cups"
+                      aria-label="Unit"
+                    />
+                  </div>
+                  <div className="col-span-6">
+                    <Input
+                      {...form.register(`ingredients.${i}.name`)}
+                      placeholder="all-purpose flour"
+                      aria-label="Name"
+                    />
+                  </div>
+                  <div className="col-span-1 flex">
+                    <button
+                      type="button"
+                      onClick={() => ingredients.remove(i)}
+                      aria-label="Remove ingredient"
+                      className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                  <div className="col-span-12">
+                    <Input
+                      {...form.register(`ingredients.${i}.note`)}
+                      placeholder="optional note (sifted, melted, etc.)"
+                      aria-label="Note"
+                      className="text-xs"
+                    />
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       </section>
 
@@ -315,27 +456,53 @@ export function RecipeForm(props: Props) {
         </div>
 
         <ol className="space-y-2">
-          {steps.fields.map((field, i) => (
-            <li key={field.id} className="flex items-start gap-2">
-              <span className="mt-2 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-                {i + 1}
-              </span>
-              <Textarea
-                {...form.register(`steps.${i}.body`)}
-                placeholder="Describe the step..."
-                rows={2}
-                className="flex-1"
-              />
-              <button
-                type="button"
-                onClick={() => steps.remove(i)}
-                aria-label="Remove step"
-                className="mt-1 flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+          {steps.fields.map((field, i) => {
+            const flag = stepFlagFor(field.id);
+            const showStrip = flag && stepUnresolved(field.id);
+            return (
+              <li
+                key={field.id}
+                className={cn(
+                  "space-y-2",
+                  showStrip &&
+                    "rounded-lg border border-amber-300/40 bg-amber-50/40 p-2 dark:bg-amber-300/5",
+                )}
               >
-                <Trash2 className="size-4" />
-              </button>
-            </li>
-          ))}
+                {showStrip && (
+                  <StepReviewStrip
+                    flag={flag}
+                    onResolve={() => markResolved(field.id)}
+                    onUseCheck={(text) => {
+                      form.setValue(`steps.${i}.body`, text, {
+                        shouldDirty: true,
+                      });
+                      markResolved(field.id);
+                    }}
+                    onRemove={() => steps.remove(i)}
+                  />
+                )}
+                <div className="flex items-start gap-2">
+                  <span className="mt-2 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                    {i + 1}
+                  </span>
+                  <Textarea
+                    {...form.register(`steps.${i}.body`)}
+                    placeholder="Describe the step..."
+                    rows={2}
+                    className="flex-1"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => steps.remove(i)}
+                    aria-label="Remove step"
+                    className="mt-1 flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              </li>
+            );
+          })}
         </ol>
       </section>
 
@@ -503,19 +670,210 @@ export function RecipeForm(props: Props) {
         <Button
           type="submit"
           size="lg"
-          disabled={isPending}
+          disabled={isPending || blockSave}
           className="gap-1.5 min-w-32"
         >
           {isPending && <Loader2 className="size-4 animate-spin" />}
-          {isPending
-            ? "Saving..."
-            : mode === "edit"
-              ? "Save changes"
-              : "Save recipe"}
+          {saveButtonLabel(isPending, mode, blockSave, unresolvedCount)}
         </Button>
       </div>
     </form>
   );
+}
+
+function saveButtonLabel(
+  isPending: boolean,
+  mode: "create" | "edit",
+  blockSave: boolean,
+  unresolvedCount: number,
+): string {
+  if (isPending) return "Saving...";
+  if (blockSave) {
+    return `Save (${unresolvedCount} to verify first)`;
+  }
+  return mode === "edit" ? "Save changes" : "Save recipe";
+}
+
+/**
+ * Per-row strip rendered above an ingredient when verification flagged
+ * it. The action set depends on which sub-flag is set, in priority
+ * order: injected (verifier added it) → mismatch (units/quantities
+ * disagree) → onlyInOriginal (verifier didn't see it) → lowConfidence
+ * (model self-doubt with no second opinion). Only ONE action group is
+ * shown at a time so the affordance stays unambiguous.
+ */
+function IngredientReviewStrip({
+  flag,
+  current,
+  onResolve,
+  onPickCheck,
+  onRemove,
+}: {
+  flag: IngredientFlag;
+  current: { quantity?: string | null; unit?: string | null; name: string };
+  onResolve: () => void;
+  onPickCheck: (updates: { quantity?: string; unit?: string }) => void;
+  onRemove: () => void;
+}) {
+  const reasons: string[] = [];
+  if (flag.injected) reasons.push(flag.injected.reason);
+  if (flag.mismatch) reasons.push(flag.mismatch.reason);
+  if (flag.onlyInOriginal) reasons.push(flag.onlyInOriginal.reason);
+  if (flag.lowConfidence && !flag.mismatch && !flag.injected) {
+    reasons.push("The extractor flagged this row as low-confidence.");
+  }
+
+  if (flag.injected) {
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: "Add to recipe", onClick: onResolve },
+          { label: "Skip", variant: "neutral", onClick: onRemove },
+        ]}
+      />
+    );
+  }
+  if (flag.mismatch) {
+    const m = flag.mismatch;
+    const currentLabel = formatChooserLabel(current.quantity, current.unit);
+    const checkLabel = formatChooserLabel(m.check.quantity, m.check.unit);
+    // If the formatted labels collapse to the same string (e.g. both
+    // empty), fall back to a single "Confirm" so we don't render two
+    // identical-looking buttons.
+    if (currentLabel === checkLabel) {
+      return (
+        <ReviewStrip
+          reasons={reasons}
+          actions={[{ label: "Confirm", onClick: onResolve }]}
+        />
+      );
+    }
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: `Use \u201C${currentLabel}\u201D`, onClick: onResolve },
+          {
+            label: `Use \u201C${checkLabel}\u201D`,
+            onClick: () =>
+              onPickCheck({
+                ...(m.fieldsDiffering.includes("quantity")
+                  ? { quantity: m.check.quantity ?? "" }
+                  : {}),
+                ...(m.fieldsDiffering.includes("unit")
+                  ? { unit: m.check.unit ?? "" }
+                  : {}),
+              }),
+          },
+        ]}
+      />
+    );
+  }
+  if (flag.onlyInOriginal) {
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: "Keep", onClick: onResolve },
+          { label: "Remove", variant: "danger", onClick: onRemove },
+        ]}
+      />
+    );
+  }
+  // lowConfidence-only fallback.
+  return (
+    <ReviewStrip
+      reasons={reasons}
+      actions={[{ label: "Confirm", onClick: onResolve }]}
+    />
+  );
+}
+
+function StepReviewStrip({
+  flag,
+  onResolve,
+  onUseCheck,
+  onRemove,
+}: {
+  flag: StepFlag;
+  onResolve: () => void;
+  onUseCheck: (text: string) => void;
+  onRemove: () => void;
+}) {
+  const reasons: string[] = [];
+  if (flag.injected) reasons.push(flag.injected.reason);
+  if (flag.textDiverges) reasons.push(flag.textDiverges.reason);
+  if (flag.onlyInOriginal) reasons.push(flag.onlyInOriginal.reason);
+  if (flag.lowConfidence && !flag.textDiverges && !flag.injected) {
+    reasons.push("The extractor flagged this step as low-confidence.");
+  }
+
+  if (flag.injected) {
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: "Add to recipe", onClick: onResolve },
+          { label: "Skip", variant: "neutral", onClick: onRemove },
+        ]}
+      />
+    );
+  }
+  if (flag.textDiverges) {
+    const check = flag.textDiverges.check;
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: "Keep current", onClick: onResolve },
+          {
+            label: "Use verifier's reading",
+            onClick: () => onUseCheck(check),
+          },
+        ]}
+        hint={
+          <span>
+            Verifier read it as: &ldquo;
+            {truncate(check, 140)}
+            &rdquo;
+          </span>
+        }
+      />
+    );
+  }
+  if (flag.onlyInOriginal) {
+    return (
+      <ReviewStrip
+        reasons={reasons}
+        actions={[
+          { label: "Keep", onClick: onResolve },
+          { label: "Remove", variant: "danger", onClick: onRemove },
+        ]}
+      />
+    );
+  }
+  return (
+    <ReviewStrip
+      reasons={reasons}
+      actions={[{ label: "Confirm", onClick: onResolve }]}
+    />
+  );
+}
+
+function formatChooserLabel(
+  quantity: string | null | undefined,
+  unit: string | null | undefined,
+): string {
+  return [quantity, unit]
+    .map((s) => (s ?? "").trim())
+    .filter((s) => s !== "")
+    .join(" ")
+    .trim() || "(blank)";
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1).trimEnd() + "\u2026";
 }
 
 function Field({

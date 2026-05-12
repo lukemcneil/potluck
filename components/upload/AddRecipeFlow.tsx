@@ -6,12 +6,17 @@ import { Camera, ImagePlus, Link as LinkIcon, Pencil, ArrowLeft, Sparkles, Loade
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RecipeForm } from "@/components/recipe/RecipeForm";
+import {
+  RecipeForm,
+  type RecipeFormVerification,
+} from "@/components/recipe/RecipeForm";
 import {
   PhotoPicker,
   type UploadedPhoto,
 } from "@/components/upload/PhotoPicker";
 import type { ExtractedRecipe } from "@/lib/validators";
+import type { Discrepancy } from "@/lib/ai/discrepancies";
+import { buildReviewPayload } from "@/lib/ai/review";
 
 type ExtractionCost = {
   modelId: string;
@@ -33,6 +38,23 @@ type AiSpendSnapshot = {
   capUsd: number | null;
 };
 
+/**
+ * Shape of the JSON returned by `POST /api/extract` (success or
+ * 422 no-recipe). `verificationFailed` is true when the second-pass
+ * verification call timed out / errored / disagreed about whether
+ * the input was a recipe — the importer still gets the primary
+ * recipe but with a banner noting the safety net was off.
+ */
+type ExtractApiResponse = {
+  recipe?: ExtractedRecipe;
+  discrepancies?: Discrepancy[];
+  verificationFailed?: boolean;
+  cost?: ExtractionCost;
+  spend?: ExtractionSpend;
+  error?: string;
+  reason?: string;
+};
+
 const SOFT_CAP_FRACTION = 2 / 3;
 
 function isApproachingCap(spend: AiSpendSnapshot | null): boolean {
@@ -51,6 +73,7 @@ type Stage =
       prefill: Partial<RecipePrefill> | null;
       sourceUrl?: string | null;
       cost?: ExtractionCost | null;
+      verification?: RecipeFormVerification | null;
     };
 
 type RecipePrefill = {
@@ -131,13 +154,7 @@ export function AddRecipeFlow({
           imageIds: photos.map((p) => idFromPath(p.publicPath)),
         }),
       });
-      const body = (await res.json().catch(() => ({}))) as {
-        recipe?: ExtractedRecipe;
-        cost?: ExtractionCost;
-        spend?: ExtractionSpend;
-        error?: string;
-        reason?: string;
-      };
+      const body = (await res.json().catch(() => ({}))) as ExtractApiResponse;
       applySpendUpdate(body.spend);
       if (res.status === 422 && body?.error === "no_recipe_found") {
         setExtractError(
@@ -151,11 +168,18 @@ export function AddRecipeFlow({
       if (!res.ok || !body.recipe) {
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
+      const review = buildReviewPayload(body.recipe, body.discrepancies ?? []);
       setStage({
         kind: "form",
         photos,
-        prefill: prefillFromExtraction(body.recipe),
+        prefill: prefillFromReview(body.recipe, review),
         cost: body.cost ?? null,
+        verification: {
+          ingredientFlags: review.ingredientFlags,
+          stepFlags: review.stepFlags,
+          verificationFailed: !!body.verificationFailed,
+          source: { kind: "photos", photos },
+        },
       });
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
@@ -172,13 +196,7 @@ export function AddRecipeFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind: "url", url }),
       });
-      const body = (await res.json().catch(() => ({}))) as {
-        recipe?: ExtractedRecipe;
-        cost?: ExtractionCost;
-        spend?: ExtractionSpend;
-        error?: string;
-        reason?: string;
-      };
+      const body = (await res.json().catch(() => ({}))) as ExtractApiResponse;
       applySpendUpdate(body.spend);
       if (res.status === 422 && body?.error === "no_recipe_found") {
         setExtractError(
@@ -192,12 +210,19 @@ export function AddRecipeFlow({
       if (!res.ok || !body.recipe) {
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
+      const review = buildReviewPayload(body.recipe, body.discrepancies ?? []);
       setStage({
         kind: "form",
         photos: [],
-        prefill: prefillFromExtraction(body.recipe),
+        prefill: prefillFromReview(body.recipe, review),
         sourceUrl: url,
         cost: body.cost ?? null,
+        verification: {
+          ingredientFlags: review.ingredientFlags,
+          stepFlags: review.stepFlags,
+          verificationFailed: !!body.verificationFailed,
+          source: { kind: "url", url },
+        },
       });
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : "Extraction failed");
@@ -482,6 +507,7 @@ export function AddRecipeFlow({
                 } as never)
               : { sourceUrl: stage.sourceUrl ?? null } as never
           }
+          verification={stage.verification ?? null}
         />
       </div>
     </div>
@@ -572,24 +598,36 @@ function formatCapUsd(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-function prefillFromExtraction(r: ExtractedRecipe): Partial<RecipePrefill> {
+/**
+ * Build form prefill from the recipe + spliced {@link ReviewPayload}.
+ * The payload's `ingredients` and `steps` already include
+ * verifier-added rows in place (with their `IngredientFlag.injected` /
+ * `StepFlag.injected` set), which means the form's row indices match
+ * the flag arrays positionally on first render — exactly what
+ * `RecipeForm` relies on to re-key the flag maps by RHF row id.
+ */
+type ReviewPayload = ReturnType<typeof buildReviewPayload>;
+function prefillFromReview(
+  recipe: ExtractedRecipe,
+  review: ReviewPayload,
+): Partial<RecipePrefill> {
   return {
-    title: r.title,
-    description: r.description ?? null,
-    prepMinutes: r.prepMinutes ?? null,
-    cookMinutes: r.cookMinutes ?? null,
-    servings: r.servings ?? null,
-    mealType: r.mealType ?? null,
-    cuisine: r.cuisine ?? null,
-    diets: r.suggestedDiets ?? [],
-    tags: r.suggestedTags ?? [],
-    ingredients: r.ingredients.map((ing, i) => ({
+    title: recipe.title,
+    description: recipe.description ?? null,
+    prepMinutes: recipe.prepMinutes ?? null,
+    cookMinutes: recipe.cookMinutes ?? null,
+    servings: recipe.servings ?? null,
+    mealType: recipe.mealType ?? null,
+    cuisine: recipe.cuisine ?? null,
+    diets: recipe.suggestedDiets ?? [],
+    tags: recipe.suggestedTags ?? [],
+    ingredients: review.ingredients.map((ing, i) => ({
       position: i,
-      quantity: ing.quantity ?? null,
-      unit: ing.unit ?? null,
+      quantity: ing.quantity,
+      unit: ing.unit,
       name: ing.name,
-      note: ing.note ?? null,
+      note: ing.note,
     })),
-    steps: r.steps.map((s, i) => ({ position: i, body: s.body })),
+    steps: review.steps.map((s, i) => ({ position: i, body: s.body })),
   };
 }

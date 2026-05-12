@@ -138,8 +138,11 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Extraction failed";
+    // "missing API key" and "image not found" are user-fixable, so we
+    // surface them as 400. Anything else (network, upstream 5xx,
+    // malformed model output) bubbles up as 500.
     const isUserError =
-      message.startsWith("OPENAI_API_KEY") || message.startsWith("Image not found");
+      /API_KEY|API key|Image not found/i.test(message);
     return NextResponse.json(
       { error: message },
       { status: isUserError ? 400 : 500 },
