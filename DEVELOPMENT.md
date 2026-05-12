@@ -393,6 +393,75 @@ VAPID-based Web Push, opt-in per-device.
 - **Triggers** (`lib/push/notify.ts`): currently fires on **first save** of a recipe (`saveRecipeAction` checks for an existing row before the upsert), on every comment (`addCommentAction`), and on every rating (`setRatingAction`). All `void`-fired so the action that triggered them is never blocked on push latency. Self-actions (author rating/saving/commenting on their own recipe) skip the notify.
 - **Service worker** (`public/sw.js` v2): adds `push` and `notificationclick` handlers. Payload shape is `{ title, body, url, tag?, icon? }`; `tag` lets the OS coalesce repeated alerts on the same resource (e.g. five rating bumps collapse into one banner). Click focuses an existing tab on the target URL when possible, otherwise opens a new window.
 
+## AI extraction trust (verification gate)
+
+The recipe-import flow runs every extraction through a deterministic
+verification gate so a quietly-wrong AI reading (the canonical failure
+mode is `1 tsp salt` quietly becoming `1 tbsp salt`) can't make it
+into someone's pan without a human taking a look at it first.
+
+- **Per-field confidence**: `extractedRecipeSchema` carries
+  `confidence: "high" | "low"` on every ingredient and step. The
+  system prompt asks the model to mark anything it had to guess
+  (smudged photo, ambiguous abbreviation, partial OCR) as `low`.
+  Over-flagging is cheap; under-flagging means a mistake gets cooked.
+- **Self-check pass** (`lib/ai/extract-recipe.ts#extractAndVerifyRecipe`):
+  every `/api/extract` call fans out to two parallel LLM calls against
+  the same prepared source content. Verification always uses
+  `gpt-4o-mini` (or `gemini-2.5-flash` on the Google provider) — the
+  cheaper-and-different-from-primary combo is what makes the second
+  pass meaningful rather than a model agreeing with itself. 10 s hard
+  timeout; throws / timeouts / no-recipe disagreement all soft-fail to
+  `{ verificationFailed: true, discrepancies: [] }`. We never block an
+  import on a flaky second pass.
+- **Discrepancy aligner** (`lib/ai/discrepancies.ts#diffExtractions`):
+  pure deterministic function that diffs the two extractions and emits
+  a typed list — `ingredient_mismatch`, `ingredient_only_in_original`,
+  `ingredient_missing_from_original`, `step_text_diverges`,
+  `step_only_in_original`, `step_missing_from_original`. Exact
+  normalized-name matching for ingredients (lowercased, diacritics
+  stripped, punctuation collapsed); positional + Levenshtein-ratio for
+  steps (paraphrases pass the 30% threshold; wholesale rewrites
+  trip). Notes are intentionally not diffed — they're free-form and
+  would drown out high-stakes quantity/unit warnings.
+- **Review payload builder** (`lib/ai/review.ts#buildReviewPayload`):
+  splices `*_missing_from_original` rows into the form's initial
+  ingredient/step arrays in place, attaches per-row flags so the form
+  can render a yellow review strip above the affected rows.
+- **Verification gate UX** (`components/recipe/RecipeForm.tsx`): the
+  form takes an optional `verification` prop. When set, every flagged
+  row gets a yellow review strip above its inputs with one of:
+    - `Add to recipe` / `Skip` (verifier added it)
+    - `Use "1 tbsp"` / `Use "1 tsp"` (qty/unit mismatch)
+    - `Keep` / `Remove` (verifier didn't see it)
+    - `Confirm` (low-confidence with no second opinion)
+  Both options on a mismatch are AI guesses — the wording avoids
+  "Keep mine" because the user didn't author either reading. Save
+  reads `Save (N to verify first)` and is disabled while any flagged
+  row is unresolved. Resolution state is keyed by RHF's stable
+  `field.id` so removing/adding rows during review doesn't break the
+  count.
+- **Source pane** (`components/recipe/ReviewSourcePane.tsx`): sticky
+  bar at the top of the review form. URL imports get
+  "Imported from {domain} → Open original"; photo imports get a
+  thumbnail strip. Either lets the importer eyeball the source
+  without leaving the page.
+- **`sourceUrl` on the recipe detail page** (`app/(app)/r/[id]/page.tsx`):
+  surfaces as an "Imported from {domain}" line under the title and an
+  "Open original" button in the action bar so cooks can verify any
+  suspicious quantity mid-recipe, weeks after the import was approved.
+
+What we deliberately did NOT do (per the May 2026 design discussion):
+
+- No heuristic safety scanner (e.g. flag any salt over 1 tbsp). Felt
+  brittle and noisy; the verification pass already catches the
+  unit-substitution failure mode.
+- No "AI-imported" badge on the recipe detail page. The sourceUrl
+  attribution serves the same purpose for URL imports, and badging
+  every photo import felt like noise.
+- No `Keep mine` button on mismatches. Both passes are AI guesses, so
+  the chooser uses neutral `Use "X"` / `Use "Y"` wording instead.
+
 ## Gotchas
 
 - **pnpm build approvals**: `sharp`, `better-sqlite3`, `unrs-resolver`, `esbuild`, `msw` need `pnpm approve-builds`. Configured in `package.json#pnpm.onlyBuiltDependencies` and `pnpm-workspace.yaml#allowBuilds`. If you see `[ERR_PNPM_IGNORED_BUILDS]`, run `pnpm approve-builds --all`.

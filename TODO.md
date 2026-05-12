@@ -111,10 +111,10 @@
 
 ## Phase 9.5 — AI cost & observability
 
-> Per-call cost is now logged ($0.0067/extraction on `gpt-4o`, $0.0041 on `gpt-4o-mini`; see DEVELOPMENT.md). These items make spend visible and bounded.
+> Per-call cost is now logged. With the default `google` provider (Gemini Flash) extractions are within the free tier; with `openai` they cost $0.0067/extraction on `gpt-4o`, $0.0041 on `gpt-4o-mini`. See DEVELOPMENT.md.
 
-- [x] `lib/ai/pricing.ts` — pricing table + `computeCost()`
-- [x] `extractRecipe()` returns `{ recipe, cost }` and logs a structured `[ai.extract]` line
+- [x] `lib/ai/pricing.ts` — pricing table + `computeCost()` (covers OpenAI + Gemini Flash)
+- [x] `extractRecipe()` returns `{ recipe, cost }` and logs a structured `[ai.extract]` line (includes `provider=`)
 - [x] `/api/extract` includes cost in the JSON response body
 - [x] Persist usage: `aiUsage` table (`userId`, `recipeId?`, `model`, `inputTokens`, `outputTokens`, `totalTokens`, `costUsd`, `createdAt`) written from the API route on success
 - [x] Per-user monthly spend cap (`POTLUCK_USER_MONTHLY_USD_CAP`, env-configurable) — `/api/extract` returns 402 with friendly copy when MTD spend ≥ cap
@@ -122,6 +122,8 @@
 - [x] AI usage card on the owner's `/u/[handle]` — total spend MTD + breakdown by model + progress bar against the configured cap
 - [x] Auto-fallback to `gpt-4o-mini` when the user is over a soft threshold (~⅔ of cap) — `app/api/extract/route.ts`
 - [x] Show on AddRecipeFlow extracting screen if the user is approaching their cap (amber banner with current MTD spend / cap)
+- [x] **Pluggable AI provider** (`AI_PROVIDER` env, default `google`) — Gemini Flash free tier for personal use; `openai` retained for paid setups.
+- [ ] **JSON-LD fast path for URL imports** (option B from the May 12 chat): parse `<script type="application/ld+json">` Recipe schema directly when present (covers ~80% of recipe blogs) and skip the LLM entirely for those. Falls back to LLM for sites without it. Cheap quality win even on the free tier (saves rate-limit budget).
 
 ## Phase 10 — Docs + deploy
 
@@ -142,7 +144,7 @@
 
 ---
 
-## Phase 12 — AI extraction trust (in progress)
+## Phase 12 — AI extraction trust
 
 > Goal: stop bad AI extractions from making it into someone's pan. The
 > common failure mode is unit substitution on high-stakes ingredients
@@ -152,33 +154,35 @@
 > picking a value, plus we surface the source on the recipe page so a
 > cook mid-recipe can sanity-check anything that smells off.
 
-- [ ] **Per-ingredient confidence**: extend `extractedRecipeSchema` with
-  `confidence: "high" | "low"` on each ingredient + step, prompt the
-  model to mark fields it's unsure about. Initial state for those rows
-  in the review form is `needs check`.
-- [ ] **Self-check pass** (`gpt-4o-mini`): second call after the main
-  extraction that re-reads the same source (cached HTML for URL
-  imports, the same image ids for photo imports) and emits a typed
-  list of discrepancies (`ingredient_mismatch`,
-  `ingredient_missing_from_original`, `ingredient_only_in_original`,
-  `step_text_diverges`, `step_missing_from_original`,
-  `step_only_in_original`) with a one-line `reason`. ~$0.001-0.002 +
-  ~1-2 s; 10 s timeout, soft-fail with a "verification unavailable"
-  banner. Counted against the same monthly cap.
-- [ ] **Verification gate in the review step**: each flagged row gets
-  a yellow strip with the reason and neutral two-button chooser
-  (`Use "1 tbsp"` / `Use "1 tsp"` / `Edit` for mismatches; `Confirm` /
-  `Edit` for low-confidence; `Add` / `Skip` for missing; `Keep` /
-  `Remove` for extra). Save button reads `Save (N to verify first)`
-  and is disabled while any rows are unresolved.
-- [ ] **Side-by-side source preview** in the review step: pinned source
-  pane (collapsible drawer on mobile) with the import photos or a URL
-  thumbnail + "Open original" button so verification doesn't require
-  switching tabs.
-- [ ] **`sourceUrl` on the recipe detail page**: today we capture it
-  but never show it. Surface as an "Imported from {domain}" link near
-  the title with an "Open original" affordance in the action bar so
-  cooks can verify any suspicious quantity mid-recipe.
+- [x] **Per-ingredient confidence**: `extractedRecipeSchema` carries
+  `confidence: "high" | "low"` on every ingredient + step. The system
+  prompt asks the model to mark anything it had to guess (smudged
+  photo, ambiguous abbreviation, partial OCR).
+- [x] **Self-check pass**: `extractAndVerifyRecipe()` runs the primary
+  + a second extraction (always `gpt-4o-mini` / `gemini-2.5-flash`) in
+  parallel against the same prepared source content, then aligns them
+  with `diffExtractions` to emit the typed discrepancy list. 10 s hard
+  timeout; throws / no-recipe disagreement / timeouts all soft-fail to
+  `{ verificationFailed: true, discrepancies: [] }`. Cost is summed so
+  the cap / billing logic stays a single number.
+- [x] **Verification gate in the review step**: every flagged row
+  shows a yellow strip with reason + a single action group (Add/Skip,
+  Use X / Use Y, Keep/Remove, or Confirm). Save reads
+  `Save (N to verify first)` and is disabled while any flagged row is
+  unresolved. Resolution state is keyed by RHF's stable `field.id` so
+  inserts/removes don't break the count.
+- [x] **Side-by-side source preview**: sticky `<ReviewSourcePane>` at
+  the top of the form. URL imports show
+  "Imported from {domain} → Open original"; photo imports show a
+  thumbnail strip clickable to open each in a new tab.
+- [x] **`sourceUrl` on the recipe detail page**: surfaced as
+  "Imported from {domain}" under the title and an "Open original"
+  button in the action bar.
+- [x] **Tests**: 19 cases on `diffExtractions` (`lib/ai/__tests__/discrepancies.test.ts`)
+  + 9 cases on `buildReviewPayload` (`lib/ai/__tests__/review.test.ts`).
+- [x] **Docs**: DEVELOPMENT.md "AI extraction trust" section covers
+  the gate end-to-end, including what we deliberately did NOT build
+  (heuristic safety scanner, AI-imported badge, "Keep mine" button).
 
 ## Investigations (audit, not yet a task)
 
