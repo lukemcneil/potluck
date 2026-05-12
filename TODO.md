@@ -142,6 +142,61 @@
 
 ---
 
+## Phase 12 — AI extraction trust (in progress)
+
+> Goal: stop bad AI extractions from making it into someone's pan. The
+> common failure mode is unit substitution on high-stakes ingredients
+> (1 tsp → 1 tbsp salt), which the original extractor has no way to
+> notice. We attack it with a verification gate at the review step so
+> the importer literally cannot save a flagged ingredient without
+> picking a value, plus we surface the source on the recipe page so a
+> cook mid-recipe can sanity-check anything that smells off.
+
+- [ ] **Per-ingredient confidence**: extend `extractedRecipeSchema` with
+  `confidence: "high" | "low"` on each ingredient + step, prompt the
+  model to mark fields it's unsure about. Initial state for those rows
+  in the review form is `needs check`.
+- [ ] **Self-check pass** (`gpt-4o-mini`): second call after the main
+  extraction that re-reads the same source (cached HTML for URL
+  imports, the same image ids for photo imports) and emits a typed
+  list of discrepancies (`ingredient_mismatch`,
+  `ingredient_missing_from_original`, `ingredient_only_in_original`,
+  `step_text_diverges`, `step_missing_from_original`,
+  `step_only_in_original`) with a one-line `reason`. ~$0.001-0.002 +
+  ~1-2 s; 10 s timeout, soft-fail with a "verification unavailable"
+  banner. Counted against the same monthly cap.
+- [ ] **Verification gate in the review step**: each flagged row gets
+  a yellow strip with the reason and neutral two-button chooser
+  (`Use "1 tbsp"` / `Use "1 tsp"` / `Edit` for mismatches; `Confirm` /
+  `Edit` for low-confidence; `Add` / `Skip` for missing; `Keep` /
+  `Remove` for extra). Save button reads `Save (N to verify first)`
+  and is disabled while any rows are unresolved.
+- [ ] **Side-by-side source preview** in the review step: pinned source
+  pane (collapsible drawer on mobile) with the import photos or a URL
+  thumbnail + "Open original" button so verification doesn't require
+  switching tabs.
+- [ ] **`sourceUrl` on the recipe detail page**: today we capture it
+  but never show it. Surface as an "Imported from {domain}" link near
+  the title with an "Open original" affordance in the action bar so
+  cooks can verify any suspicious quantity mid-recipe.
+
+## Investigations (audit, not yet a task)
+
+- **Fractions vs decimals across the app**: audit how quantities are
+  parsed, scaled, displayed, consolidated, and round-tripped.
+  - Extractor stores raw text ("1 1/2", "0.5", "½").
+  - `lib/cooking/scale.ts` accepts all three forms but renders back to
+    fraction glyphs.
+  - Shopping-list `consolidate` uses its own parse + glyph format.
+  - Cook-mode + recipe body show scaled values; the seam between
+    scaled (decimal) and displayed (fraction) is worth checking for
+    drift, especially around values like 1/3 cup × 2 servings → 0.666
+    → "⅔" vs "0.67".
+  - Decide on a single canonical representation in storage and a
+    single render path.
+
+---
+
 ## Deferred (post-v1, do not build yet)
 
 - Follow / followers + "from people you follow" feed
