@@ -11,6 +11,7 @@ import {
   EyeOff,
   Pencil,
   CookingPot,
+  ExternalLink,
 } from "lucide-react";
 
 import { db } from "@/db/client";
@@ -149,6 +150,9 @@ export default async function RecipePage({
           <p className="mt-2 text-muted-foreground">{recipe.description}</p>
         )}
 
+        <SourceAttribution sourceUrl={recipe.sourceUrl ?? null} />
+
+
         <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
           {author && (
             <Link
@@ -208,6 +212,23 @@ export default async function RecipePage({
             </Button>
           )}
           <PrintButton />
+          {recipe.sourceUrl && (
+            <Button
+              render={
+                <a
+                  href={recipe.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                />
+              }
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+            >
+              <ExternalLink className="size-3.5" />
+              Open original
+            </Button>
+          )}
           {isAuthor && (
             <Button
               render={<Link href={`/r/${recipe.id}/edit`} />}
@@ -344,4 +365,36 @@ function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/**
+ * "Imported from cookingstuff.com" line under the recipe header. The
+ * domain links out to the original; bare attribution helps cooks
+ * sanity-check anything suspicious mid-recipe (the AI extractor isn't
+ * always right, especially on units). Renders nothing for hand-typed
+ * recipes that have no `sourceUrl`.
+ */
+function SourceAttribution({ sourceUrl }: { sourceUrl: string | null }) {
+  if (!sourceUrl) return null;
+  let domain = sourceUrl;
+  try {
+    domain = new URL(sourceUrl).hostname.replace(/^www\./, "");
+  } catch {
+    // Bad URL — fall back to showing the raw string, the link still
+    // works because we route to the raw href.
+  }
+  return (
+    <p className="mt-2 text-sm text-muted-foreground">
+      Imported from{" "}
+      <a
+        href={sourceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+      >
+        {domain}
+        <ExternalLink className="size-3" aria-hidden />
+      </a>
+    </p>
+  );
 }
