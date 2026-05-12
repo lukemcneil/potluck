@@ -20,10 +20,16 @@
  *   pnpm test:extract --no-recipe-image
  */
 
-import "dotenv/config";
+// Load .env.local first (Next.js convention for local-only secrets),
+// then fall back to .env. `tsx` scripts don't get Next's env loader so
+// we have to do this ourselves.
+import * as dotenv from "dotenv";
 import sharp from "sharp";
 import fs from "node:fs/promises";
 import path from "node:path";
+
+dotenv.config({ path: path.join(process.cwd(), ".env.local") });
+dotenv.config();
 
 import { storage } from "../lib/storage";
 import { extractRecipe } from "../lib/ai/extract-recipe";

@@ -1,10 +1,16 @@
 /**
- * OpenAI pricing as of April 2026, in US dollars per million tokens.
- * Source: https://platform.openai.com/docs/pricing
+ * AI model pricing in US dollars per million tokens.
  *
- * Update these when OpenAI changes prices. Each entry maps a model id
- * (or family prefix) to its standard tier rates. Cached input tokens
- * are billed at half the input rate where supported.
+ * OpenAI rates: https://platform.openai.com/docs/pricing
+ * Google rates: https://ai.google.dev/pricing
+ *
+ * Update these when providers change prices. Each entry maps a model
+ * id (or family prefix) to its standard tier rates. Cached input
+ * tokens are billed at half the input rate where supported.
+ *
+ * Gemini has a free tier (15 RPM, 1500 req/day) — the cost ledger
+ * still tracks notional spend so you can see how close you are to
+ * the free-tier ceiling.
  */
 
 export type ModelPricing = {
@@ -37,6 +43,27 @@ const PRICING: Record<string, ModelPricing> = {
     inputPerMillion: 0.15,
     outputPerMillion: 0.6,
     cachedInputPerMillion: 0.075,
+  },
+
+  // Google Gemini — paid-tier rates. Free-tier users won't actually
+  // be charged anything by Google (15 RPM, 1500 req/day, 1M token
+  // ceiling) but we still compute notional cost so the UI's spend
+  // chart works the same way.
+  "gemini-2.0-flash": {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.4,
+  },
+  "gemini-2.0-flash-lite": {
+    inputPerMillion: 0.075,
+    outputPerMillion: 0.3,
+  },
+  "gemini-1.5-flash": {
+    inputPerMillion: 0.075,
+    outputPerMillion: 0.3,
+  },
+  "gemini-2.5-flash": {
+    inputPerMillion: 0.3,
+    outputPerMillion: 2.5,
   },
 };
 
