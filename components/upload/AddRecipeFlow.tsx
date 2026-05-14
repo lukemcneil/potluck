@@ -490,7 +490,7 @@ export function AddRecipeFlow({
       </p>
       {stage.cost && (
         <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
-          <span aria-hidden>\u2728</span>
+          <span aria-hidden>{"\u2728"}</span>
           AI extraction cost: {formatExtractionCost(stage.cost.totalUsd)}{" "}
           <span className="text-muted-foreground/60">
             ({stage.cost.modelId}, {stage.cost.inputTokens + stage.cost.outputTokens} tokens)
