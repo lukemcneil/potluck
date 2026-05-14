@@ -29,6 +29,7 @@ import { Separator } from "@/components/ui/separator";
 import { SaveButton } from "@/components/recipe/SaveButton";
 import { PhotoCarousel } from "@/components/recipe/PhotoCarousel";
 import { PrintButton } from "@/components/recipe/PrintButton";
+import { ShareButton } from "@/components/recipe/ShareButton";
 import { RecipeBody } from "@/components/recipe/RecipeBody";
 import { RatingControl } from "@/components/recipe/RatingControl";
 import { CommentsSection } from "@/components/recipe/CommentsSection";
@@ -210,6 +211,12 @@ export default async function RecipePage({
               <CookingPot className="size-3.5" />
               Cook
             </Button>
+          )}
+          {recipe.visibility !== "private" && (
+            <ShareButton
+              title={recipe.title}
+              description={recipe.description ?? null}
+            />
           )}
           <PrintButton />
           {recipe.sourceUrl && (
