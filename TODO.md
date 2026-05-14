@@ -159,12 +159,14 @@
   prompt asks the model to mark anything it had to guess (smudged
   photo, ambiguous abbreviation, partial OCR).
 - [x] **Self-check pass**: `extractAndVerifyRecipe()` runs the primary
-  + a second extraction (always `gpt-4o-mini` / `gemini-2.5-flash`) in
-  parallel against the same prepared source content, then aligns them
-  with `diffExtractions` to emit the typed discrepancy list. 10 s hard
-  timeout; throws / no-recipe disagreement / timeouts all soft-fail to
-  `{ verificationFailed: true, discrepancies: [] }`. Cost is summed so
-  the cap / billing logic stays a single number.
+  + a second extraction (smaller/faster model per provider:
+  `gpt-4o-mini` on OpenAI, `gemini-2.5-flash-lite` on Google; both
+  env-overridable via `*_VERIFY_MODEL`) in parallel against the same
+  prepared source content, then aligns them with `diffExtractions` to
+  emit the typed discrepancy list. 30 s hard timeout (Gemini URL
+  imports routinely take 15–30 s); throws / no-recipe disagreement /
+  timeouts all soft-fail to `{ verificationFailed: true, discrepancies: [] }`.
+  Cost is summed so the cap / billing logic stays a single number.
 - [x] **Verification gate in the review step**: every flagged row
   shows a yellow strip with reason + a single action group (Add/Skip,
   Use X / Use Y, Keep/Remove, or Confirm). Save reads
@@ -183,6 +185,13 @@
 - [x] **Docs**: DEVELOPMENT.md "AI extraction trust" section covers
   the gate end-to-end, including what we deliberately did NOT build
   (heuristic safety scanner, AI-imported badge, "Keep mine" button).
+- [x] **Free-form notes on recipes**: new `recipes.notes` column +
+  Notes section in `RecipeForm` + soft callout below the body on the
+  detail page. AI extraction prompt instructed to capture chef's
+  notes / headnotes / "make-ahead" guidance / substitutions / family
+  context — anything that isn't an ingredient count or a step.
+  Plain-text only; `whitespace-pre-line` preserves the author's line
+  breaks.
 
 ## Investigations (audit, not yet a task)
 

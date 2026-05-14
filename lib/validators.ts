@@ -31,6 +31,11 @@ export const KNOWN_DIETS = [
 export const recipeFormSchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(160),
   description: z.string().trim().max(2000).optional().nullable(),
+  // Free-form author notes (tips, substitutions, family context). A
+  // 4000-char ceiling is roughly two screens of paragraph text — far
+  // more than any real cookbook note we've seen, but bounded so it
+  // can't become a hiding spot for spam if we ever go multi-user.
+  notes: z.string().trim().max(4000).optional().nullable(),
 
   prepMinutes: z.number().int().min(0).max(60 * 24).nullable().optional(),
   cookMinutes: z.number().int().min(0).max(60 * 24).nullable().optional(),
@@ -77,6 +82,11 @@ export const extractedRecipeWireSchema = z.object({
   reason: z.string().trim().max(500).nullable(),
   title: z.string().trim().max(160),
   description: z.string().trim().max(2000).nullable(),
+  // Author/source notes pulled from the recipe — chef's notes,
+  // "make-ahead", "substitutions", "tips", "from the kitchen of…",
+  // recipe headnotes. NOT ingredient counts or steps. Free-form text,
+  // line breaks preserved.
+  notes: z.string().trim().max(4000).nullable(),
   ingredients: z
     .array(
       z.object({
@@ -114,6 +124,7 @@ export const extractedRecipeWireSchema = z.object({
 export const extractedRecipeSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2000).nullable(),
+  notes: z.string().trim().max(4000).nullable(),
   ingredients: z
     .array(
       z.object({

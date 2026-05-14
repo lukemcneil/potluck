@@ -53,6 +53,7 @@ describe("extractedRecipeSchema (strict content shape)", () => {
   const baseValid = {
     title: "Banana Bread",
     description: "A warm classic.",
+    notes: null,
     ingredients: [
       {
         quantity: "3",
@@ -118,6 +119,24 @@ describe("extractedRecipeSchema (strict content shape)", () => {
         .success,
     ).toBe(false);
   });
+
+  it("preserves free-form notes when provided", () => {
+    const parsed = extractedRecipeSchema.parse({
+      ...baseValid,
+      notes:
+        "Make-ahead: dough rests overnight.\nSub: pecans for walnuts.\nServe warm.",
+    });
+    expect(parsed.notes).toMatch(/dough rests overnight/);
+  });
+
+  it("caps notes at 4000 characters", () => {
+    expect(
+      extractedRecipeSchema.safeParse({
+        ...baseValid,
+        notes: "x".repeat(4001),
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("extractedRecipeWireSchema (OpenAI strict-mode wire shape)", () => {
@@ -126,6 +145,7 @@ describe("extractedRecipeWireSchema (OpenAI strict-mode wire shape)", () => {
     reason: null,
     title: "Banana Bread",
     description: "Warm classic.",
+    notes: null,
     ingredients: [
       {
         quantity: "3",
@@ -160,6 +180,7 @@ describe("extractedRecipeWireSchema (OpenAI strict-mode wire shape)", () => {
       reason: "This is a news article, not a recipe.",
       title: "",
       description: null,
+      notes: null,
       ingredients: [],
       steps: [],
       prepMinutes: null,

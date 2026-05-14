@@ -63,6 +63,7 @@ export async function createRecipeAction(
         title: parsed.title.trim(),
         slug,
         description: parsed.description ?? null,
+        notes: parsed.notes ?? null,
         prepMinutes: parsed.prepMinutes ?? null,
         cookMinutes: parsed.cookMinutes ?? null,
         servings: parsed.servings ?? null,
@@ -237,6 +238,7 @@ export async function updateRecipeAction(
       .set({
         title: parsed.title.trim(),
         description: parsed.description ?? null,
+        notes: parsed.notes ?? null,
         prepMinutes: parsed.prepMinutes ?? null,
         cookMinutes: parsed.cookMinutes ?? null,
         servings: parsed.servings ?? null,

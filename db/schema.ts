@@ -115,6 +115,13 @@ export const recipes = sqliteTable(
     title: text("title").notNull(),
     slug: text("slug").notNull(),
     description: text("description"),
+    /**
+     * Free-form notes from the author — tips, substitutions, family
+     * context ("Mom always doubled the garlic"), serving suggestions.
+     * Anything that isn't an ingredient or a step. Plain text for now;
+     * preserve user-entered line breaks when rendering.
+     */
+    notes: text("notes"),
     sourceUrl: text("sourceUrl"),
 
     prepMinutes: integer("prepMinutes"),

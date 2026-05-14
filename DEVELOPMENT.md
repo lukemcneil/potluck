@@ -407,11 +407,16 @@ into someone's pan without a human taking a look at it first.
   Over-flagging is cheap; under-flagging means a mistake gets cooked.
 - **Self-check pass** (`lib/ai/extract-recipe.ts#extractAndVerifyRecipe`):
   every `/api/extract` call fans out to two parallel LLM calls against
-  the same prepared source content. Verification always uses
-  `gpt-4o-mini` (or `gemini-2.5-flash` on the Google provider) — the
+  the same prepared source content. Verification picks a deliberately
+  smaller / cheaper / faster model than the primary — `gpt-4o-mini` on
+  OpenAI, `gemini-2.5-flash-lite` on Google (both env-overridable via
+  `OPENAI_VERIFY_MODEL` / `GOOGLE_VERIFY_MODEL`). The
   cheaper-and-different-from-primary combo is what makes the second
-  pass meaningful rather than a model agreeing with itself. 10 s hard
-  timeout; throws / timeouts / no-recipe disagreement all soft-fail to
+  pass meaningful rather than a model agreeing with itself, AND it
+  fits inside the 30 s hard timeout (Gemini URL imports on
+  `gemini-2.5-flash` routinely take 15–30 s, so running the same model
+  twice would just time out). Throws / timeouts / no-recipe
+  disagreement all soft-fail to
   `{ verificationFailed: true, discrepancies: [] }`. We never block an
   import on a flaky second pass.
 - **Discrepancy aligner** (`lib/ai/discrepancies.ts#diffExtractions`):

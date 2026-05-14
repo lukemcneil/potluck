@@ -40,6 +40,7 @@ export default async function EditRecipePage({
   const initial: Partial<RecipeFormInput> = {
     title: data.recipe.title,
     description: data.recipe.description ?? "",
+    notes: data.recipe.notes ?? "",
     prepMinutes: data.recipe.prepMinutes ?? null,
     cookMinutes: data.recipe.cookMinutes ?? null,
     servings: data.recipe.servings ?? "",

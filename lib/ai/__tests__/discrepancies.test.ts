@@ -22,6 +22,7 @@ function recipe(
   return {
     title: "Test",
     description: null,
+    notes: null,
     ingredients: [ing("salt", "1", "tsp")],
     steps: [step("Mix everything.")],
     prepMinutes: null,

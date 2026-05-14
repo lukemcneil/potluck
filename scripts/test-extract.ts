@@ -32,20 +32,39 @@ dotenv.config({ path: path.join(process.cwd(), ".env.local") });
 dotenv.config();
 
 import { storage } from "../lib/storage";
-import { extractRecipe } from "../lib/ai/extract-recipe";
+import {
+  aiProvider,
+  extractRecipe,
+  extractAndVerifyRecipe,
+} from "../lib/ai/extract-recipe";
 
 async function main() {
-  if (!process.env.OPENAI_API_KEY) {
-    console.error("OPENAI_API_KEY not set in env");
+  const provider = aiProvider();
+  if (provider === "openai" && !process.env.OPENAI_API_KEY) {
+    console.error(
+      "AI_PROVIDER=openai but OPENAI_API_KEY isn't set. Either set it or switch to AI_PROVIDER=google.",
+    );
+    process.exit(1);
+  }
+  if (provider === "google" && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    console.error(
+      "AI_PROVIDER=google but GOOGLE_GENERATIVE_AI_API_KEY isn't set. Get a free key at https://aistudio.google.com/apikey.",
+    );
     process.exit(1);
   }
 
-  const arg = process.argv[2];
+  // `--verify` flag exercises extractAndVerifyRecipe (primary + second
+  // pass + discrepancy diff) instead of the plain single-pass
+  // extractRecipe. Lets us smoke-test that the verification model and
+  // 30 s timeout actually fit together in practice.
+  const args = process.argv.slice(2);
+  const withVerify = args.includes("--verify");
+  const arg = args.find((a) => a !== "--verify");
 
   // URL mode: skip the image pipeline entirely and exercise the
   // server-side HTML fetch -> LLM extraction path.
   if (arg && /^https?:\/\//i.test(arg)) {
-    await runUrlMode(arg);
+    await runUrlMode(arg, withVerify);
     return;
   }
 
@@ -176,11 +195,15 @@ async function main() {
   }
 }
 
-async function runUrlMode(url: string) {
+async function runUrlMode(url: string, withVerify = false) {
   console.log(`\n→ Importing recipe from URL: ${url}`);
-  console.log("→ Fetching HTML server-side and calling extractRecipe()...\n");
+  console.log(
+    `→ Fetching HTML server-side and calling ${withVerify ? "extractAndVerifyRecipe()" : "extractRecipe()"}...\n`,
+  );
   const startedAt = Date.now();
-  const result = await extractRecipe({ kind: "url", url });
+  const result = withVerify
+    ? await extractAndVerifyRecipe({ kind: "url", url })
+    : await extractRecipe({ kind: "url", url });
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
 
   console.log(`✓ Got result in ${elapsed}s\n`);
@@ -192,6 +215,31 @@ async function runUrlMode(url: string) {
     cachedInputTokens: result.cost.cachedInputTokens,
     totalUsd: round(result.cost.totalCost, 6),
   });
+
+  if (withVerify) {
+    // The branch is `extractAndVerifyRecipe` → result is the
+    // verification-aware union. Cast to that here so we get typed
+    // access to the extra fields without leaking the parameter type
+    // pollution into the non-verify branch above.
+    const v = result as Awaited<
+      ReturnType<typeof extractAndVerifyRecipe>
+    >;
+    console.log("\n---- VERIFICATION ----");
+    console.log({
+      verificationFailed: v.verificationFailed,
+      discrepancyCount: v.discrepancies.length,
+      primaryCostUsd: round(v.primaryCost.totalCost, 6),
+      verificationCostUsd:
+        v.verificationCost == null
+          ? null
+          : round(v.verificationCost.totalCost, 6),
+    });
+    if (v.discrepancies.length > 0) {
+      for (const d of v.discrepancies) {
+        console.log(`  - ${d.kind}${"reason" in d ? `: ${d.reason}` : ""}`);
+      }
+    }
+  }
 
   if (result.kind === "no-recipe") {
     console.log("\n---- OUTCOME ----");
@@ -206,6 +254,10 @@ async function runUrlMode(url: string) {
   if (recipe.description) {
     console.log("\n---- DESCRIPTION ----");
     console.log(recipe.description);
+  }
+  if (recipe.notes) {
+    console.log("\n---- NOTES ----");
+    console.log(recipe.notes);
   }
   console.log("\n---- META ----");
   console.log({

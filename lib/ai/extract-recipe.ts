@@ -70,6 +70,21 @@ const OPENAI_URL_MODEL_DEFAULT = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
 const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
 const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
 
+// Model used for the SECOND (verification) pass. We deliberately pick a
+// smaller/cheaper model than the primary so:
+//   (a) it actually finishes within VERIFICATION_TIMEOUT_MS — the
+//       primary URL pass on Gemini Flash routinely takes 15–30s, which
+//       blew up our old 10s budget,
+//   (b) the verifier reads the source independently of the primary's
+//       biases (different size / training mix = independent failure
+//       modes), which is the whole point of cross-checking.
+// OpenAI: gpt-4o-mini is the established cheap counterpart.
+// Google: gemini-2.5-flash-lite is ~3x faster + cheaper than 2.5-flash.
+const OPENAI_VERIFY_MODEL =
+  process.env.OPENAI_VERIFY_MODEL ?? "gpt-4o-mini";
+const GOOGLE_VERIFY_MODEL =
+  process.env.GOOGLE_VERIFY_MODEL ?? "gemini-2.5-flash-lite";
+
 /**
  * Cheaper text-only model used for the soft-cap downgrade in
  * /api/extract (image extraction routes to this when the user is
@@ -77,6 +92,10 @@ const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
  */
 export const URL_MODEL =
   aiProvider() === "openai" ? OPENAI_URL_MODEL_DEFAULT : GOOGLE_URL_MODEL;
+
+function verifyModelFor(provider: AiProvider): string {
+  return provider === "openai" ? OPENAI_VERIFY_MODEL : GOOGLE_VERIFY_MODEL;
+}
 
 function defaultModelFor(
   provider: AiProvider,
@@ -131,6 +150,12 @@ When a recipe IS present:
 - For diets, only include labels you can confidently infer: vegetarian, vegan, gluten-free, dairy-free, nut-free, keto, paleo, low-carb, pescatarian.
 - Tags are 1-2 word lowercase descriptors useful for filtering (e.g. "weeknight", "one-pan", "make-ahead").
 
+NOTES (free-form context that is NOT ingredients or steps):
+- Capture things like: chef's notes / headnotes, "make-ahead" guidance, substitution suggestions, storage instructions, serving suggestions, equipment tips, history or family context ("from my grandmother's kitchen"), and any prose the author wrote that doesn't belong in description / ingredients / steps.
+- Keep the wording close to the source. Combine multiple call-out boxes with blank lines between them. Preserve line breaks where they're meaningful.
+- Do NOT pad with generic cooking advice the source didn't include. If there's nothing of this kind in the input, set notes to null.
+- The short marketing blurb at the top of a blog post belongs in "description", not "notes". "description" is the one-paragraph summary; "notes" is the longer prose tips/context.
+
 CONFIDENCE (per ingredient and per step):
 - Mark "confidence": "low" when ANY of: the source text is smudged, partially cropped, ambiguous, hard to read, abbreviated in a way that could mean two units (e.g. "T" for tbsp vs tsp), or when you had to guess between two plausible readings. The reviewer will be forced to confirm "low" rows before saving.
 - Mark "confidence": "high" only when the field is unambiguous in the source.
@@ -172,22 +197,24 @@ export async function extractRecipe(
  * the primary result enriched with a typed `discrepancies` list and
  * the SUM of both calls' cost.
  *
- * The verification pass always uses {@link URL_MODEL} (gpt-4o-mini)
+ * The verification pass uses a deliberately smaller model than the
+ * primary (gpt-4o-mini on OpenAI; gemini-2.5-flash-lite on Google)
  * because:
- * (a) it's ~17x cheaper than gpt-4o, so even on image imports we
- *     barely move the needle,
+ * (a) it's much cheaper, so even on image imports we barely move the
+ *     needle on the user's monthly cap,
  * (b) using a different model than the primary makes it more likely
  *     to "see" the source independently rather than parrot the
  *     primary's biases,
- * (c) for URL imports the primary is already mini, so we get free
- *     stochastic independence from the API.
+ * (c) it actually finishes within VERIFICATION_TIMEOUT_MS — the
+ *     primary URL pass on Gemini Flash routinely takes 15–30s; running
+ *     the same model again would just time out.
  *
  * Soft-fails on verification errors / timeouts / no-recipe — the
  * primary result still ships, just with `verificationFailed: true` and
  * an empty `discrepancies` array. We never block an import on a flaky
  * second pass.
  */
-const VERIFICATION_TIMEOUT_MS = 10_000;
+const VERIFICATION_TIMEOUT_MS = 30_000;
 
 export async function extractAndVerifyRecipe(
   input: ExtractInput,
@@ -201,7 +228,7 @@ export async function extractAndVerifyRecipe(
   const userParts = await buildExtractUserContent(input);
   const primaryModel =
     options.modelOverride ?? defaultModelFor(provider, input.kind);
-  const verifyModel = URL_MODEL;
+  const verifyModel = verifyModelFor(provider);
 
   const primaryPromise = runExtraction(userParts, primaryModel, input);
   // Race the verification call against a hard timeout so a slow second
@@ -382,6 +409,7 @@ async function runExtraction(
   const parsed = extractedRecipeSchema.safeParse({
     title: object.title,
     description: object.description,
+    notes: object.notes,
     ingredients: object.ingredients,
     steps: object.steps,
     prepMinutes: object.prepMinutes,

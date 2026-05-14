@@ -30,6 +30,7 @@ function recipe(partial: Partial<ExtractedRecipe>): ExtractedRecipe {
   return {
     title: "Test",
     description: null,
+    notes: null,
     ingredients: [ing("salt", { quantity: "1", unit: "tsp" })],
     steps: [step("Mix.")],
     prepMinutes: null,

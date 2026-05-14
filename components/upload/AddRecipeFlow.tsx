@@ -79,6 +79,7 @@ type Stage =
 type RecipePrefill = {
   title: string;
   description: string | null;
+  notes: string | null;
   prepMinutes: number | null;
   cookMinutes: number | null;
   servings: string | null;
@@ -614,6 +615,7 @@ function prefillFromReview(
   return {
     title: recipe.title,
     description: recipe.description ?? null,
+    notes: recipe.notes ?? null,
     prepMinutes: recipe.prepMinutes ?? null,
     cookMinutes: recipe.cookMinutes ?? null,
     servings: recipe.servings ?? null,

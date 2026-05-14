@@ -275,6 +275,8 @@ export default async function RecipePage({
         servings={recipe.servings ?? null}
       />
 
+      <RecipeNotes notes={recipe.notes ?? null} />
+
       {tagNames.length > 0 && (
         <>
           <Separator className="my-8" />
@@ -365,6 +367,31 @@ function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+/**
+ * Free-form author notes — tips, substitutions, family context. We
+ * render below the body so cooks read the ingredients/steps first,
+ * then the prose. Styled as a soft callout (not a destructive banner)
+ * so it doesn't compete visually with the recipe content.
+ *
+ * Plain text only — we render with `whitespace-pre-line` to keep the
+ * author's line breaks but stop short of full markdown to avoid
+ * letting AI-extracted notes inject links / HTML.
+ */
+function RecipeNotes({ notes }: { notes: string | null }) {
+  const trimmed = notes?.trim();
+  if (!trimmed) return null;
+  return (
+    <section className="mt-8 rounded-2xl border border-border bg-card/60 p-4 sm:p-5">
+      <h2 className="font-display text-base font-semibold tracking-tight">
+        Notes
+      </h2>
+      <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
+        {trimmed}
+      </p>
+    </section>
+  );
 }
 
 /**

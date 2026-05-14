@@ -68,6 +68,7 @@ type Props =
 const DEFAULTS: RecipeFormInput = {
   title: "",
   description: "",
+  notes: "",
   prepMinutes: null,
   cookMinutes: null,
   servings: "",
@@ -504,6 +505,26 @@ export function RecipeForm(props: Props) {
             );
           })}
         </ol>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="font-display text-lg font-semibold">Notes</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Anything that isn&apos;t an ingredient or step — tips,
+            substitutions, story behind the recipe, &ldquo;Mom always doubled
+            the garlic.&rdquo; Optional.
+          </p>
+        </div>
+        <Textarea
+          {...form.register("notes")}
+          rows={5}
+          placeholder={
+            "Make-ahead: dough rests overnight in the fridge.\n" +
+            "Sub: swap pecans for walnuts.\n" +
+            "Best served warm with vanilla ice cream."
+          }
+        />
       </section>
 
       <section className="space-y-4">
