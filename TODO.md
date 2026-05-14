@@ -124,6 +124,7 @@
 - [x] Show on AddRecipeFlow extracting screen if the user is approaching their cap (amber banner with current MTD spend / cap)
 - [x] **Pluggable AI provider** (`AI_PROVIDER` env, default `google`) — Gemini Flash free tier for personal use; `openai` retained for paid setups.
 - [ ] **JSON-LD fast path for URL imports** (option B from the May 12 chat): parse `<script type="application/ld+json">` Recipe schema directly when present (covers ~80% of recipe blogs) and skip the LLM entirely for those. Falls back to LLM for sites without it. Cheap quality win even on the free tier (saves rate-limit budget).
+- [ ] **Tame URL extraction latency / output verbosity**: with notes capture turned on, some pages (Simply Recipes, blog-heavy formats) push the model to ~11K output tokens and ~55s primary-pass latency. Output tokens are autoregressive so they directly drive wall-clock time. Worth investigating: a per-field length budget in the prompt, a `max_output_tokens` clamp on the API call, or splitting notes capture into a cheap second pass on flash-lite so the slow primary doesn't have to write everything. Image extraction is unaffected (stays at 9–12s).
 
 ## Phase 10 — Docs + deploy
 

@@ -457,8 +457,8 @@ export function AddRecipeFlow({
         </h2>
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
           {stage.url
-            ? "Fetching the page and parsing it. This usually takes 5–15 seconds."
-            : `Looking at ${stage.photos?.length ?? 0} photo${(stage.photos?.length ?? 0) === 1 ? "" : "s"} and turning them into a recipe card. This usually takes 5–15 seconds.`}
+            ? "Fetching the page and reading it carefully. Usually 15–45 seconds — richer pages with long headnotes take a bit more."
+            : `Looking at ${stage.photos?.length ?? 0} photo${(stage.photos?.length ?? 0) === 1 ? "" : "s"} and turning them into a recipe card. Usually 10–20 seconds.`}
         </p>
         {approaching && aiSpend?.capUsd != null && (
           <div className="mt-6 inline-flex max-w-sm items-start gap-2 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100">
@@ -467,7 +467,7 @@ export function AddRecipeFlow({
               You&apos;ve used {formatCapUsd(aiSpend.totalUsd)} of your{" "}
               {formatCapUsd(aiSpend.capUsd)} monthly AI budget.{" "}
               {isImageExtraction
-                ? "We'll use the cheaper gpt-4o-mini for the rest of this month."
+                ? "We'll switch to a cheaper model for the rest of this month."
                 : "URL extraction already uses the cheaper model — no impact."}
             </span>
           </div>

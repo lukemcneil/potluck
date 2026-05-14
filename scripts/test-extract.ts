@@ -114,12 +114,13 @@ async function main() {
   });
   console.log(`→ Saved to disk: ${stored.publicPath} (id: ${stored.id})`);
 
-  console.log("→ Calling extractRecipe() with gpt-4o vision...\n");
+  console.log(
+    `→ Calling ${withVerify ? "extractAndVerifyRecipe()" : "extractRecipe()"} on the image...\n`,
+  );
   const startedAt = Date.now();
-  const result = await extractRecipe({
-    kind: "imageIds",
-    imageIds: [stored.id],
-  });
+  const result = withVerify
+    ? await extractAndVerifyRecipe({ kind: "imageIds", imageIds: [stored.id] })
+    : await extractRecipe({ kind: "imageIds", imageIds: [stored.id] });
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
 
   console.log(`✓ Got result in ${elapsed}s\n`);
@@ -131,6 +132,22 @@ async function main() {
     cachedInputTokens: result.cost.cachedInputTokens,
     totalUsd: round(result.cost.totalCost, 6),
   });
+
+  if (withVerify) {
+    const v = result as Awaited<
+      ReturnType<typeof extractAndVerifyRecipe>
+    >;
+    console.log("\n---- VERIFICATION ----");
+    console.log({
+      verificationFailed: v.verificationFailed,
+      discrepancyCount: v.discrepancies.length,
+      primaryCostUsd: round(v.primaryCost.totalCost, 6),
+      verificationCostUsd:
+        v.verificationCost == null
+          ? null
+          : round(v.verificationCost.totalCost, 6),
+    });
+  }
 
   if (result.kind === "no-recipe") {
     console.log("\n---- OUTCOME ----");
