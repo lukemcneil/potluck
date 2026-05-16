@@ -124,7 +124,8 @@
 - [x] Show on AddRecipeFlow extracting screen if the user is approaching their cap (amber banner with current MTD spend / cap)
 - [x] **Pluggable AI provider** (`AI_PROVIDER` env, default `google`) — Gemini Flash free tier for personal use; `openai` retained for paid setups.
 - [ ] **JSON-LD fast path for URL imports** (option B from the May 12 chat): parse `<script type="application/ld+json">` Recipe schema directly when present (covers ~80% of recipe blogs) and skip the LLM entirely for those. Falls back to LLM for sites without it. Cheap quality win even on the free tier (saves rate-limit budget).
-- [ ] **Tame URL extraction latency / output verbosity**: with notes capture turned on, some pages (Simply Recipes, blog-heavy formats) push the model to ~11K output tokens and ~55s primary-pass latency. Output tokens are autoregressive so they directly drive wall-clock time. Worth investigating: a per-field length budget in the prompt, a `max_output_tokens` clamp on the API call, or splitting notes capture into a cheap second pass on flash-lite so the slow primary doesn't have to write everything. Image extraction is unaffected (stays at 9–12s).
+- [ ] **Tame URL extraction latency / output verbosity**: with notes capture turned on, some pages (Simply Recipes, blog-heavy formats) push the model to ~11K output tokens and ~55s primary-pass latency. Output tokens are autoregressive so they directly drive wall-clock time. Worth investigating: a per-field length budget in the prompt, a `max_output_tokens` clamp on the API call, or splitting notes capture into a cheap second pass on flash-lite so the slow primary doesn't have to write everything. Image extraction is unaffected (stays at 9–12s). Partially mitigated as of May 14 2026 by switching default primary to `gemini-3.1-flash-lite` (6–20s on long URLs vs 25–55s on 2.5-flash).
+- [ ] **Sanity-check gate for audit hallucinations**: flash-lite class models occasionally make up audit issues — claim the source says X when it doesn't, or claim the primary said Y when it didn't. Add a `primaryReading` field to `extractionIssuesWireSchema` (what the auditor THINKS the primary said) and a translator-side filter that drops any issue whose `primaryReading` doesn't substring-match the actual primary value at `primaryIndex`. Won't catch source-side misreads but kills the most common hallucination class. ~50 lines of code + 5–10 unit tests.
 
 ## Phase 10 — Docs + deploy
 
@@ -159,15 +160,24 @@
   `confidence: "high" | "low"` on every ingredient + step. The system
   prompt asks the model to mark anything it had to guess (smudged
   photo, ambiguous abbreviation, partial OCR).
-- [x] **Self-check pass**: `extractAndVerifyRecipe()` runs the primary
-  + a second extraction (smaller/faster model per provider:
+- [x] **Sequential audit pass**: `extractAndVerifyRecipe()` runs the
+  primary first, then passes its structured recipe + the same source
+  content to a second LLM call (smaller/faster model per provider:
   `gpt-4o-mini` on OpenAI, `gemini-2.5-flash-lite` on Google; both
-  env-overridable via `*_VERIFY_MODEL`) in parallel against the same
-  prepared source content, then aligns them with `diffExtractions` to
-  emit the typed discrepancy list. 30 s hard timeout (Gemini URL
-  imports routinely take 15–30 s); throws / no-recipe disagreement /
-  timeouts all soft-fail to `{ verificationFailed: true, discrepancies: [] }`.
-  Cost is summed so the cap / billing logic stays a single number.
+  env-overridable via `*_VERIFY_MODEL`) that emits a structured
+  `ExtractionIssues` payload (wrong_quantity, wrong_unit, wrong_name,
+  should_be_removed, missing — per ingredient and per step).
+  `issuesToDiscrepancies` then translates that to the existing
+  `Discrepancy[]` so the review-payload builder + form stay
+  unchanged. We switched from the parallel-extract-and-diff design
+  because (a) the auditor mental model produces clearer review-strip
+  wording, (b) emitting DIFFs is a smaller output budget than a full
+  fresh extraction, so the audit stays fast (~5–10 s on flash-lite),
+  (c) the audit prompt explicitly lists common failure modes
+  (tsp↔tbsp, dropped finishing salt, swapped fractions) to mitigate
+  anchoring bias. 30 s hard timeout; throws / timeouts soft-fail to
+  `{ verificationFailed: true, discrepancies: [] }`. Cost is summed
+  so the cap / billing logic stays a single number.
 - [x] **Verification gate in the review step**: every flagged row
   shows a yellow strip with reason + a single action group (Add/Skip,
   Use X / Use Y, Keep/Remove, or Confirm). Save reads
@@ -181,8 +191,10 @@
 - [x] **`sourceUrl` on the recipe detail page**: surfaced as
   "Imported from {domain}" under the title and an "Open original"
   button in the action bar.
-- [x] **Tests**: 19 cases on `diffExtractions` (`lib/ai/__tests__/discrepancies.test.ts`)
-  + 9 cases on `buildReviewPayload` (`lib/ai/__tests__/review.test.ts`).
+- [x] **Tests**: 19 cases on the legacy `diffExtractions` + 14 cases
+  on `issuesToDiscrepancies` (the sequential-audit translator), all
+  in `lib/ai/__tests__/discrepancies.test.ts`; + 9 cases on
+  `buildReviewPayload` (`lib/ai/__tests__/review.test.ts`).
 - [x] **Docs**: DEVELOPMENT.md "AI extraction trust" section covers
   the gate end-to-end, including what we deliberately did NOT build
   (heuristic safety scanner, AI-imported badge, "Keep mine" button).

@@ -69,6 +69,17 @@ const PRICING: Record<string, ModelPricing> = {
     inputPerMillion: 0.1,
     outputPerMillion: 0.4,
   },
+  // Gemini 3.x — Flash-Lite GA'd May 7 2026, marketed as "most
+  // cost-efficient model" but rates are actually higher than 2.5
+  // flash-lite. Pricing: https://ai.google.dev/gemini-api/docs/pricing
+  "gemini-3.1-flash-lite": {
+    inputPerMillion: 0.25,
+    outputPerMillion: 1.5,
+  },
+  "gemini-3.1-flash-lite-preview": {
+    inputPerMillion: 0.25,
+    outputPerMillion: 1.5,
+  },
 };
 
 export function pricingFor(modelId: string): ModelPricing | null {

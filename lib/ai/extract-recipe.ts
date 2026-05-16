@@ -7,13 +7,15 @@ import { google } from "@ai-sdk/google";
 import {
   extractedRecipeSchema,
   extractedRecipeWireSchema,
+  extractionIssuesWireSchema,
   type ExtractedRecipe,
+  type ExtractionIssues,
 } from "@/lib/validators";
 import { storage } from "@/lib/storage";
 import { computeCost, formatUsd, type CostBreakdown } from "@/lib/ai/pricing";
 import { fetchRecipePage } from "@/lib/recipe-import/fetch";
 import {
-  diffExtractions,
+  issuesToDiscrepancies,
   type Discrepancy,
 } from "@/lib/ai/discrepancies";
 
@@ -31,11 +33,11 @@ export type ExtractResult = ExtractOk | ExtractNoRecipe;
 
 /**
  * Result of {@link extractAndVerifyRecipe}: the primary extraction
- * plus a deterministic diff against an independent second pass over
- * the same source. Use this from the API route — `cost` is the SUM of
- * both passes so the caller can charge / cap on a single number.
+ * plus a list of mistakes a sequential audit pass found in it. Use
+ * this from the API route — `cost` is the SUM of both calls so the
+ * caller can charge / cap on a single number.
  *
- * `verificationFailed` means the second pass errored or timed out and
+ * `verificationFailed` means the audit pass errored or timed out and
  * we fell back to a no-discrepancies result. The UI surfaces a
  * "verification unavailable" banner so importers know the safety net
  * isn't there for this one.
@@ -67,8 +69,17 @@ const OPENAI_URL_MODEL_DEFAULT = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
 // `gemini-2.5-flash` is the current "fast + smart + free tier"
 // workhorse. `gemini-2.0-flash` is older and on some accounts has its
 // free-tier quota set to 0 — switching to 2.5 avoids that footgun.
-const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
-const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
+// Gemini 3.1 Flash-Lite (GA May 2026) is dramatically faster than
+// 2.5-flash for our use case — 6–8s on long blog URLs vs 25–55s, with
+// equally good extraction quality. The lite tier also gets a much
+// larger free-tier RPD than full 2.5-flash (which is currently
+// throttled to 20 RPD on some accounts), so this is a substantial UX
+// + quota win. Override per-deployment with `GOOGLE_MODEL` /
+// `GOOGLE_URL_MODEL` if you want the slower but slightly stronger
+// `gemini-2.5-flash` or `gemini-2.5-pro`.
+const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-3.1-flash-lite";
+const GOOGLE_URL_MODEL =
+  process.env.GOOGLE_URL_MODEL ?? "gemini-3.1-flash-lite";
 
 // Model used for the SECOND (verification) pass. We deliberately pick a
 // smaller/cheaper model than the primary so:
@@ -79,11 +90,16 @@ const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
 //       biases (different size / training mix = independent failure
 //       modes), which is the whole point of cross-checking.
 // OpenAI: gpt-4o-mini is the established cheap counterpart.
-// Google: gemini-2.5-flash-lite is ~3x faster + cheaper than 2.5-flash.
+// Google: gemini-3.1-flash-lite. We use the SAME model for primary
+// and audit because (a) flash-lite is fast enough that the audit
+// doesn't push us out of the user's latency budget even when both
+// passes run sequentially, (b) using the same model keeps free-tier
+// quota usage on a single bucket, (c) the lite tier's RPD is high
+// enough that we don't burn through it in a normal day.
 const OPENAI_VERIFY_MODEL =
   process.env.OPENAI_VERIFY_MODEL ?? "gpt-4o-mini";
 const GOOGLE_VERIFY_MODEL =
-  process.env.GOOGLE_VERIFY_MODEL ?? "gemini-2.5-flash-lite";
+  process.env.GOOGLE_VERIFY_MODEL ?? "gemini-3.1-flash-lite";
 
 /**
  * Cheaper text-only model used for the soft-cap downgrade in
@@ -191,28 +207,33 @@ export async function extractRecipe(
 }
 
 /**
- * Verification-aware orchestrator: runs the primary extraction and a
- * second independent extraction in parallel against the same prepared
- * source content, then aligns the two with `diffExtractions`. Returns
- * the primary result enriched with a typed `discrepancies` list and
- * the SUM of both calls' cost.
+ * Verification-aware orchestrator: runs the primary extraction and
+ * then, sequentially, an AUDIT pass that's shown both the original
+ * source AND the primary's structured output, and asked to flag any
+ * mistakes. Returns the primary result enriched with a typed
+ * `discrepancies` list translated from the auditor's issue report,
+ * plus the SUM of both calls' cost.
  *
- * The verification pass uses a deliberately smaller model than the
- * primary (gpt-4o-mini on OpenAI; gemini-2.5-flash-lite on Google)
- * because:
- * (a) it's much cheaper, so even on image imports we barely move the
- *     needle on the user's monthly cap,
- * (b) using a different model than the primary makes it more likely
- *     to "see" the source independently rather than parrot the
- *     primary's biases,
- * (c) it actually finishes within VERIFICATION_TIMEOUT_MS — the
- *     primary URL pass on Gemini Flash routinely takes 15–30s; running
- *     the same model again would just time out.
+ * Why sequential instead of two independent passes in parallel? We
+ * tried parallel-and-diff first; the user prefers the auditor
+ * mental model ("did the primary get this right?") because:
+ *   (a) the verifier's output reads as "primary said X, source
+ *       actually says Y" rather than "two AIs disagreed", which
+ *       makes review-strip wording clearer;
+ *   (b) the auditor only needs to emit DIFFs (the issues), not a
+ *       fresh full re-extraction, so it runs against a smaller
+ *       output budget and stays fast (~5–10s on flash-lite);
+ *   (c) anchoring bias is real but the audit prompt mitigates by
+ *       explicitly listing common failure modes (tsp↔tbsp, dropped
+ *       finishing salt, swapped fractions) and telling the model to
+ *       be paranoid.
  *
- * Soft-fails on verification errors / timeouts / no-recipe — the
- * primary result still ships, just with `verificationFailed: true` and
- * an empty `discrepancies` array. We never block an import on a flaky
- * second pass.
+ * The audit pass uses a deliberately smaller model than the primary
+ * (gpt-4o-mini on OpenAI; gemini-2.5-flash-lite on Google).
+ *
+ * Soft-fails on audit errors / timeouts — the primary result still
+ * ships, just with `verificationFailed: true` and an empty
+ * `discrepancies` array. We never block an import on a flaky audit.
  */
 const VERIFICATION_TIMEOUT_MS = 30_000;
 
@@ -230,66 +251,61 @@ export async function extractAndVerifyRecipe(
     options.modelOverride ?? defaultModelFor(provider, input.kind);
   const verifyModel = verifyModelFor(provider);
 
-  const primaryPromise = runExtraction(userParts, primaryModel, input);
-  // Race the verification call against a hard timeout so a slow second
-  // pass can't hold the whole import hostage.
-  const verifyPromise = withTimeout(
-    runExtraction(userParts, verifyModel, input).catch(
-      (err): ExtractResult & { __failed: true } => ({
-        kind: "no-recipe",
-        reason: err instanceof Error ? err.message : String(err),
-        cost: zeroCost(verifyModel),
-        __failed: true,
-      }),
+  const primary = await runExtraction(userParts, primaryModel, input);
+
+  // Audit only makes sense when the primary actually returned a
+  // recipe. If primary bailed (no-recipe), there's nothing to audit;
+  // emit the unchanged no-recipe result with no discrepancies.
+  if (primary.kind !== "ok") {
+    return {
+      ...primary,
+      primaryCost: primary.cost,
+      verificationCost: null,
+      verificationFailed: false,
+      discrepancies: [],
+    };
+  }
+
+  // Race the audit call against a hard timeout so a slow second pass
+  // can't hold the whole import hostage. Throw / timeout both
+  // soft-fail to `verificationFailed: true` with an empty discrepancy
+  // list — the primary still ships.
+  const auditPromise = withTimeout(
+    runAuditPass(userParts, verifyModel, primary.recipe, input).catch(
+      (err): AuditResult & { __failed: true } => {
+        // Surface the upstream error in server logs so we can debug
+        // schema-validation / rate-limit / quota failures without
+        // the user seeing anything but the soft-fail banner.
+        console.warn(
+          `[ai.audit] failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          issues: { looksCorrect: true, ingredientIssues: [], stepIssues: [] },
+          cost: zeroCost(verifyModel),
+          __failed: true,
+        };
+      },
     ),
     VERIFICATION_TIMEOUT_MS,
   );
 
-  const [primary, verifyOrTimeout] = await Promise.all([
-    primaryPromise,
-    verifyPromise,
-  ]);
+  const auditOrTimeout = await auditPromise;
 
-  // Verification soft-fail cases:
-  //  1. timeout   -> verifyOrTimeout === TIMEOUT_SENTINEL
-  //  2. throw     -> __failed: true (cost is zero — we never heard back)
-  //  3. no-recipe -> verification disagreed about whether it's a recipe
-  //                  at all; we don't know who's right, so don't block.
-  let verifyResult: ExtractResult | null = null;
-  let verifyFailed = false;
   let verifyCost: CostBreakdown | null = null;
+  let verifyFailed = false;
+  let discrepancies: Discrepancy[] = [];
 
-  if (verifyOrTimeout === TIMEOUT_SENTINEL) {
+  if (auditOrTimeout === TIMEOUT_SENTINEL) {
     verifyFailed = true;
-  } else if ("__failed" in verifyOrTimeout) {
+  } else if ("__failed" in auditOrTimeout) {
     verifyFailed = true;
+    // We never heard back, so audit cost is zero — don't bill for it.
   } else {
-    verifyResult = verifyOrTimeout;
-    verifyCost = verifyOrTimeout.cost;
-    if (verifyOrTimeout.kind !== "ok") {
-      // Treat as soft-fail rather than emitting "everything is missing"
-      // discrepancies — the second pass might just be wrong.
-      verifyFailed = true;
-    }
+    verifyCost = auditOrTimeout.cost;
+    discrepancies = issuesToDiscrepancies(auditOrTimeout.issues, primary.recipe);
   }
-
-  const discrepancies: Discrepancy[] =
-    primary.kind === "ok" && verifyResult?.kind === "ok"
-      ? diffExtractions(primary.recipe, verifyResult.recipe)
-      : [];
 
   const totalCost = sumCost(primary.cost, verifyCost);
-
-  if (primary.kind === "no-recipe") {
-    return {
-      ...primary,
-      cost: totalCost,
-      primaryCost: primary.cost,
-      verificationCost: verifyCost,
-      verificationFailed: verifyFailed,
-      discrepancies: [],
-    };
-  }
 
   return {
     ...primary,
@@ -300,6 +316,142 @@ export async function extractAndVerifyRecipe(
     discrepancies,
   };
 }
+
+/**
+ * One audit-pass LLM call. Shown the SAME source content the primary
+ * saw, plus the primary's structured recipe rendered as JSON, plus
+ * the audit system prompt that lists common failure modes the model
+ * should look for. Returns a typed issues object + cost.
+ */
+type AuditResult = {
+  issues: ExtractionIssues;
+  cost: CostBreakdown;
+};
+
+async function runAuditPass(
+  primaryUserParts: UserContent,
+  model: string,
+  primaryRecipe: ExtractedRecipe,
+  input: ExtractInput,
+): Promise<AuditResult> {
+  const provider = aiProvider();
+  const auditParts = buildAuditUserContent(primaryUserParts, primaryRecipe);
+
+  const startedAt = Date.now();
+  const { object, usage } = await generateObject({
+    model: modelHandle(provider, model),
+    schema: extractionIssuesWireSchema,
+    system: AUDIT_SYSTEM_PROMPT,
+    messages: [{ role: "user", content: auditParts }],
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  const cost = computeCost(model, {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cachedInputTokens: usage.cachedInputTokens,
+  });
+
+  const totalIssues =
+    object.ingredientIssues.length + object.stepIssues.length;
+  console.log(
+    `[ai.audit] provider=${provider} model=${model} kind=${input.kind} ` +
+      `looksCorrect=${object.looksCorrect} issues=${totalIssues} ` +
+      `tokens=${cost.inputTokens}+${cost.outputTokens}=${cost.inputTokens + cost.outputTokens} ` +
+      `cost=${formatUsd(cost.totalCost)} ` +
+      `latency=${(elapsedMs / 1000).toFixed(2)}s`,
+  );
+
+  return { issues: object, cost };
+}
+
+/**
+ * Build the audit pass's user content: the source content the primary
+ * saw (HTML text part for URLs, image parts for photos), plus a final
+ * text block describing the primary's extracted recipe as JSON and
+ * asking the model to audit it.
+ */
+function buildAuditUserContent(
+  primaryUserParts: UserContent,
+  primaryRecipe: ExtractedRecipe,
+): UserContent {
+  // The first user-content part of an extraction is always a text
+  // intro ("Here is a photo of a recipe..." or "The user wants to
+  // import a recipe from this page..."). Drop that and keep the
+  // payload (HTML body or image attachments), then append the audit
+  // intro + primary recipe JSON.
+  const sourceParts = Array.isArray(primaryUserParts)
+    ? primaryUserParts.slice(1)
+    : [];
+
+  const recipeJson = JSON.stringify(
+    {
+      title: primaryRecipe.title,
+      description: primaryRecipe.description ?? null,
+      notes: primaryRecipe.notes ?? null,
+      prepMinutes: primaryRecipe.prepMinutes ?? null,
+      cookMinutes: primaryRecipe.cookMinutes ?? null,
+      servings: primaryRecipe.servings ?? null,
+      mealType: primaryRecipe.mealType ?? null,
+      cuisine: primaryRecipe.cuisine ?? null,
+      ingredients: primaryRecipe.ingredients.map((ing, i) => ({
+        index: i,
+        quantity: ing.quantity ?? null,
+        unit: ing.unit ?? null,
+        name: ing.name,
+        note: ing.note ?? null,
+      })),
+      steps: primaryRecipe.steps.map((s, i) => ({
+        index: i,
+        body: s.body,
+      })),
+    },
+    null,
+    2,
+  );
+
+  return [
+    {
+      type: "text" as const,
+      text:
+        "Below is the SOURCE the previous extractor read (HTML page or photos). After it, you'll see the EXTRACTED recipe that extractor produced. Your job is to audit the extracted recipe against the source and report any mistakes.",
+    },
+    ...sourceParts,
+    {
+      type: "text" as const,
+      text:
+        `EXTRACTED RECIPE (in JSON, indices match arrays):\n\n${recipeJson}\n\n` +
+        `Now compare it against the source above and emit a structured list of issues. ` +
+        `Be paranoid about quantity/unit mismatches — those are the most common AI mistakes ` +
+        `and the most likely to ruin a dish. If the extraction looks correct, set ` +
+        `"looksCorrect": true and return empty arrays.`,
+    },
+  ];
+}
+
+const AUDIT_SYSTEM_PROMPT = `You are a recipe extraction auditor. A previous AI agent has extracted a structured recipe from a source (a webpage's HTML or a photo). Your job is to compare the agent's output against the source and find mistakes.
+
+Common mistakes the previous extractor makes (be paranoid about these):
+- Misreading "tsp" as "tbsp" or vice versa (the single most common safety-critical error).
+- Swapping fractions: 1/2 ↔ 1/4, 1/3 ↔ 3/4, etc.
+- Confusing similar units: cup vs c., lb vs lbs, oz (weight) vs fl oz (volume).
+- Dropping a small ingredient: a pinch of salt, sea salt for finishing, a pat of butter, a splash of lemon.
+- Misreading numbers in handwriting: 3 ↔ 8, 6 ↔ 9.
+- Merging two steps into one (or splitting one step into two).
+- Slight rewordings of steps that lose a constraint (e.g. "until golden" becoming just "until done").
+- Hallucinating an ingredient or step that isn't in the source.
+
+For each mistake, emit a structured issue:
+- For a wrong ingredient field, use kind "wrong_quantity" / "wrong_unit" / "wrong_name", reference the ingredient by its primaryIndex (the "index" field in the EXTRACTED recipe), and put what the source ACTUALLY says into the corrected* fields.
+- For an ingredient the previous extractor hallucinated, use kind "should_be_removed" with primaryIndex pointing to the bogus row.
+- For an ingredient in the source the previous extractor MISSED, use kind "missing" with primaryIndex=null, and put the full corrected ingredient into the corrected* fields.
+- Same scheme for steps: text_wrong / should_be_removed / missing.
+
+Rules:
+- Only flag mistakes you can support by re-reading the source. Don't speculate.
+- Don't flag cosmetic differences (capitalization, ordering of equivalent phrasing, trailing punctuation, "tablespoons" vs "tbsp" when both are unambiguous).
+- "reason" should be a one-sentence explanation grounded in the source — quote the source if helpful.
+- If everything looks correct, set "looksCorrect": true and return empty arrays. Don't invent issues to fill space.`;
 
 const TIMEOUT_SENTINEL = Symbol("verification-timeout");
 

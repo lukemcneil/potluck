@@ -405,30 +405,59 @@ into someone's pan without a human taking a look at it first.
   system prompt asks the model to mark anything it had to guess
   (smudged photo, ambiguous abbreviation, partial OCR) as `low`.
   Over-flagging is cheap; under-flagging means a mistake gets cooked.
-- **Self-check pass** (`lib/ai/extract-recipe.ts#extractAndVerifyRecipe`):
-  every `/api/extract` call fans out to two parallel LLM calls against
-  the same prepared source content. Verification picks a deliberately
-  smaller / cheaper / faster model than the primary — `gpt-4o-mini` on
-  OpenAI, `gemini-2.5-flash-lite` on Google (both env-overridable via
-  `OPENAI_VERIFY_MODEL` / `GOOGLE_VERIFY_MODEL`). The
-  cheaper-and-different-from-primary combo is what makes the second
-  pass meaningful rather than a model agreeing with itself, AND it
-  fits inside the 30 s hard timeout (Gemini URL imports on
-  `gemini-2.5-flash` routinely take 15–30 s, so running the same model
-  twice would just time out). Throws / timeouts / no-recipe
-  disagreement all soft-fail to
-  `{ verificationFailed: true, discrepancies: [] }`. We never block an
-  import on a flaky second pass.
-- **Discrepancy aligner** (`lib/ai/discrepancies.ts#diffExtractions`):
-  pure deterministic function that diffs the two extractions and emits
-  a typed list — `ingredient_mismatch`, `ingredient_only_in_original`,
+- **Sequential audit pass** (`lib/ai/extract-recipe.ts#extractAndVerifyRecipe`):
+  every `/api/extract` call runs the primary extraction first, then
+  passes its structured recipe + the original source content to a
+  second LLM call (the "audit pass") whose job is to read both and
+  emit a typed list of mistakes — wrong quantity, wrong unit, missed
+  ingredient, hallucinated row, garbled step. On Google the default
+  is `gemini-3.1-flash-lite` for BOTH primary and audit (chosen for
+  speed: ~6–8s primary on long URLs vs 25–55s for 2.5-flash, and to
+  keep free-tier RPD on a single high-volume bucket). On OpenAI we
+  default to `gpt-4o` primary and `gpt-4o-mini` audit. Both pairs are
+  env-overridable via `GOOGLE_MODEL` / `GOOGLE_URL_MODEL` /
+  `GOOGLE_VERIFY_MODEL` (and `OPENAI_*` equivalents).
+  We tried parallel-and-diff first and switched to sequential audit
+  because (a) the auditor reading "primary said X, source says Y"
+  produces clearer review-strip wording than two independent
+  extractions disagreeing, (b) emitting DIFFs is a smaller output
+  budget than a fresh full extraction, so the audit stays fast
+  (~5–10 s on flash-lite), (c) anchoring bias is mitigated by an
+  audit prompt that enumerates common failure modes (tsp↔tbsp,
+  dropped finishing salt, swapped fractions). Hard 30 s timeout on
+  the audit call. Throws / timeouts soft-fail to
+  `{ verificationFailed: true, discrepancies: [] }`. We never block
+  an import on a flaky audit.
+  Known limitation: flash-lite tier models occasionally hallucinate
+  audit issues (claim the source says X when it doesn't, or claim the
+  primary said Y when it didn't). Smoke-tested rate is ~1 false
+  positive per 2 recipes on cream-puffs / Sally's-eclairs-class blog
+  pages. The user can dismiss false flags via the side-by-side source
+  pane during review. The future "sanity-check gate" TODO item adds
+  a `primaryReading` field to the audit schema and drops issues
+  whose claimed primary value doesn't match what's actually at
+  primaryIndex — straightforward defense in depth.
+- **Issues schema** (`lib/validators.ts#extractionIssuesWireSchema`):
+  flat Zod object the audit pass returns. Per ingredient issue:
+  `primaryIndex` + `kind`
+  (`wrong_quantity|wrong_unit|wrong_name|should_be_removed|missing`) +
+  corrected fields + `reason`. Same shape for step issues. Flat /
+  fully-nullable so it passes OpenAI's strict-mode structured-output
+  validation and Gemini's.
+- **Issues → discrepancies translator**
+  (`lib/ai/discrepancies.ts#issuesToDiscrepancies`): pure code that
+  maps the audit pass's structured issues onto the existing typed
+  `Discrepancy[]` (`ingredient_mismatch`, `ingredient_only_in_original`,
   `ingredient_missing_from_original`, `step_text_diverges`,
-  `step_only_in_original`, `step_missing_from_original`. Exact
-  normalized-name matching for ingredients (lowercased, diacritics
-  stripped, punctuation collapsed); positional + Levenshtein-ratio for
-  steps (paraphrases pass the 30% threshold; wholesale rewrites
-  trip). Notes are intentionally not diffed — they're free-form and
-  would drown out high-stakes quantity/unit warnings.
+  `step_only_in_original`, `step_missing_from_original`) so the
+  review-payload builder + form stay unchanged. Defensive against
+  out-of-bounds indexes and missing fields; drops issues it can't
+  make actionable rather than crashing.
+- **`diffExtractions`** is the older pure-code differ used by the
+  parallel-extraction design. It's kept exported with its 19 unit
+  tests because it's still useful as a primitive (e.g. for a future
+  "compare two extractions of the same recipe" workflow) but is no
+  longer wired into the live pipeline.
 - **Review payload builder** (`lib/ai/review.ts#buildReviewPayload`):
   splices `*_missing_from_original` rows into the form's initial
   ingredient/step arrays in place, attaches per-row flags so the form

@@ -2,6 +2,9 @@ import type {
   ExtractedRecipe,
   ExtractedIngredient,
   ExtractedStep,
+  ExtractionIssues,
+  IngredientIssue,
+  StepIssue,
 } from "@/lib/validators";
 
 /**
@@ -110,10 +113,167 @@ function normalizeShort(s: string | null | undefined): string {
 }
 
 /**
+ * Translate the sequential verifier's `ExtractionIssues` into the
+ * existing `Discrepancy[]` shape that the review UI already speaks.
+ *
+ * The verifier (in the sequential design) has already seen the
+ * primary's recipe + the source content and emitted typed issues:
+ *   - wrong_*           → ingredient_mismatch with the corrected check side
+ *   - should_be_removed → ingredient_only_in_original
+ *   - missing           → ingredient_missing_from_original
+ * Same mapping for steps. We do light defensive validation
+ * (out-of-bounds indexes get dropped) so a confused verifier can't
+ * crash the importer.
+ *
+ * Pure function — no I/O, no LLM. The verifier's `reason` strings are
+ * surfaced verbatim in the review strips so the model's natural-
+ * language explanation reaches the user.
+ */
+export function issuesToDiscrepancies(
+  issues: ExtractionIssues,
+  primary: ExtractedRecipe,
+): Discrepancy[] {
+  const out: Discrepancy[] = [];
+
+  for (const issue of issues.ingredientIssues) {
+    const d = ingredientIssueToDiscrepancy(issue, primary);
+    if (d) out.push(d);
+  }
+  for (const issue of issues.stepIssues) {
+    const d = stepIssueToDiscrepancy(issue, primary);
+    if (d) out.push(d);
+  }
+
+  return out;
+}
+
+function ingredientIssueToDiscrepancy(
+  issue: IngredientIssue,
+  primary: ExtractedRecipe,
+): Discrepancy | null {
+  if (issue.kind === "missing") {
+    // Verifier says this ingredient is in the source but the primary
+    // missed it. Needs a full corrected name to be actionable.
+    const name = issue.correctedName?.trim();
+    if (!name) return null;
+    return {
+      kind: "ingredient_missing_from_original",
+      // We don't know where it should go in the original list; the
+      // splicer in `buildReviewPayload` will insert it. Appending at
+      // the end is the safe default — the user can drag it.
+      suggestedIndex: primary.ingredients.length,
+      check: {
+        quantity: issue.correctedQuantity ?? null,
+        unit: issue.correctedUnit ?? null,
+        name,
+        note: issue.correctedNote ?? null,
+      },
+      reason: issue.reason,
+    };
+  }
+
+  // Everything else needs a primaryIndex that lands inside the array.
+  const idx = issue.primaryIndex;
+  if (idx == null || idx < 0 || idx >= primary.ingredients.length) return null;
+  const original = primary.ingredients[idx];
+
+  if (issue.kind === "should_be_removed") {
+    return {
+      kind: "ingredient_only_in_original",
+      index: idx,
+      original: trim(original),
+      reason: issue.reason,
+    };
+  }
+
+  // wrong_quantity / wrong_unit / wrong_name. Translate to a mismatch
+  // with `fieldsDiffering` set to which slice the verifier flagged.
+  const field: IngredientField =
+    issue.kind === "wrong_quantity"
+      ? "quantity"
+      : issue.kind === "wrong_unit"
+        ? "unit"
+        : "name";
+
+  return {
+    kind: "ingredient_mismatch",
+    index: idx,
+    fieldsDiffering: [field],
+    original: trim(original),
+    check: {
+      quantity: issue.correctedQuantity ?? original.quantity ?? null,
+      unit: issue.correctedUnit ?? original.unit ?? null,
+      // For wrong_name we use the corrected name; for wrong_quantity
+      // / wrong_unit we keep the primary's name so the chooser strip
+      // doesn't spuriously offer a name swap.
+      name:
+        issue.kind === "wrong_name"
+          ? (issue.correctedName?.trim() ?? original.name)
+          : original.name,
+      note: issue.correctedNote ?? original.note ?? null,
+    },
+    reason: issue.reason,
+  };
+}
+
+function stepIssueToDiscrepancy(
+  issue: StepIssue,
+  primary: ExtractedRecipe,
+): Discrepancy | null {
+  if (issue.kind === "missing") {
+    const body = issue.correctedText?.trim();
+    if (!body) return null;
+    const pos =
+      issue.insertPosition != null
+        ? Math.max(0, Math.min(issue.insertPosition, primary.steps.length))
+        : primary.steps.length;
+    return {
+      kind: "step_missing_from_original",
+      suggestedIndex: pos,
+      check: body,
+      reason: issue.reason,
+    };
+  }
+
+  const idx = issue.primaryIndex;
+  if (idx == null || idx < 0 || idx >= primary.steps.length) return null;
+  const original = primary.steps[idx];
+
+  if (issue.kind === "should_be_removed") {
+    return {
+      kind: "step_only_in_original",
+      index: idx,
+      original: original.body,
+      reason: issue.reason,
+    };
+  }
+
+  // text_wrong. Need the corrected text to be useful — without it the
+  // review strip would just say "this is wrong but here's nothing to
+  // compare to", which isn't actionable. Drop those silently.
+  const correctedText = issue.correctedText?.trim();
+  if (!correctedText) return null;
+
+  return {
+    kind: "step_text_diverges",
+    index: idx,
+    original: original.body,
+    check: correctedText,
+    reason: issue.reason,
+  };
+}
+
+/**
  * Compare two extractions of the same source and emit a typed list of
  * discrepancies. Pure function: deterministic for fixed inputs, no I/O,
  * no LLM calls. The aligner is intentionally conservative — when in
  * doubt it flags a row rather than silently merging.
+ *
+ * NOTE: This is no longer wired into the live extraction pipeline
+ * (`extractAndVerifyRecipe` now uses the sequential audit pass via
+ * `issuesToDiscrepancies`). It's kept exported because it's a useful
+ * pure-code utility with deep test coverage, and a future "compare
+ * two independent extractions" workflow could reuse it as-is.
  */
 export function diffExtractions(
   a: ExtractedRecipe,

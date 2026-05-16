@@ -158,6 +158,62 @@ export type ExtractedRecipe = z.infer<typeof extractedRecipeSchema>;
 export type ExtractedIngredient = ExtractedRecipe["ingredients"][number];
 export type ExtractedStep = ExtractedRecipe["steps"][number];
 
+/**
+ * Output shape for the SEQUENTIAL verifier pass. After the primary
+ * extraction produces a recipe, we run a second LLM call whose job is
+ * to audit that recipe against the original source and report any
+ * mistakes — wrong quantities, wrong units, missed ingredients,
+ * hallucinated rows, garbled steps.
+ *
+ * This is deliberately a flat object (no top-level union) and every
+ * field is `nullable` rather than `optional` so it passes both
+ * OpenAI's strict-mode structured-output JSON Schema validation and
+ * Gemini's. See `extractedRecipeWireSchema` above for the same
+ * pattern + rationale.
+ */
+export const ingredientIssueWireSchema = z.object({
+  // Which ingredient in the primary extraction is wrong. `null` when
+  // the issue is "missing" (the source has it but primary doesn't).
+  primaryIndex: z.number().int().min(0).max(200).nullable(),
+  kind: z.enum([
+    "wrong_quantity",
+    "wrong_unit",
+    "wrong_name",
+    "should_be_removed",
+    "missing",
+  ]),
+  // For wrong_*: what the ingredient should actually be (from the
+  // source). For "missing": the ingredient that should be added.
+  // For "should_be_removed": null (nothing to suggest).
+  correctedQuantity: z.string().trim().max(40).nullable(),
+  correctedUnit: z.string().trim().max(40).nullable(),
+  correctedName: z.string().trim().max(120).nullable(),
+  correctedNote: z.string().trim().max(200).nullable(),
+  reason: z.string().trim().max(300),
+});
+
+export const stepIssueWireSchema = z.object({
+  primaryIndex: z.number().int().min(0).max(200).nullable(),
+  kind: z.enum(["text_wrong", "should_be_removed", "missing"]),
+  // Where this step should be inserted, for kind=missing. 0-indexed
+  // position in the primary's step array. Null for non-missing.
+  insertPosition: z.number().int().min(0).max(200).nullable(),
+  correctedText: z.string().trim().max(2000).nullable(),
+  reason: z.string().trim().max(300),
+});
+
+export const extractionIssuesWireSchema = z.object({
+  // Verifier's overall confidence that the primary got things right.
+  // We don't gate UI on this directly — it's a debugging signal that
+  // helps us calibrate how aggressive the prompt should be.
+  looksCorrect: z.boolean(),
+  ingredientIssues: z.array(ingredientIssueWireSchema).max(40),
+  stepIssues: z.array(stepIssueWireSchema).max(20),
+});
+export type ExtractionIssues = z.infer<typeof extractionIssuesWireSchema>;
+export type IngredientIssue = z.infer<typeof ingredientIssueWireSchema>;
+export type StepIssue = z.infer<typeof stepIssueWireSchema>;
+
 export const collectionFormSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(80),
   description: z.string().trim().max(500).optional().nullable(),
