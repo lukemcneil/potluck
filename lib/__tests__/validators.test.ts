@@ -44,6 +44,49 @@ describe("recipeFormSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("defaults a photo's role to cover when omitted", () => {
+    const r = recipeFormSchema.parse({
+      title: "Pad Thai",
+      photos: [{ path: "/uploads/a.jpg" }, { path: "/uploads/b.jpg" }],
+    });
+    expect(r.photos).toEqual([
+      { path: "/uploads/a.jpg", role: "cover" },
+      { path: "/uploads/b.jpg", role: "cover" },
+    ]);
+  });
+
+  it("preserves mixed cover + source photo roles", () => {
+    const r = recipeFormSchema.parse({
+      title: "Mom's Card",
+      photos: [
+        { path: "/uploads/scan-1.jpg", role: "source" },
+        { path: "/uploads/scan-2.jpg", role: "source" },
+        { path: "/uploads/plated.jpg", role: "cover" },
+      ],
+    });
+    expect(r.photos.map((p) => p.role)).toEqual([
+      "source",
+      "source",
+      "cover",
+    ]);
+  });
+
+  it("rejects an unknown photo role", () => {
+    const result = recipeFormSchema.safeParse({
+      title: "x",
+      photos: [{ path: "/uploads/a.jpg", role: "hero" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an empty photo path", () => {
+    const result = recipeFormSchema.safeParse({
+      title: "x",
+      photos: [{ path: "", role: "cover" }],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("extractedRecipeSchema (strict content shape)", () => {

@@ -81,7 +81,7 @@ const DEFAULTS: RecipeFormInput = {
   sourceUrl: null,
   ingredients: [{ position: 0, name: "" }],
   steps: [{ position: 0, body: "" }],
-  photoIds: [],
+  photos: [],
 };
 
 export function RecipeForm(props: Props) {
@@ -213,11 +213,23 @@ export function RecipeForm(props: Props) {
   const onSubmit = form.handleSubmit((values) => {
     setSubmitError(null);
     const ingredientCount = values.ingredients?.length ?? 0;
+    // `photos_only` is reserved for recipes with at least one COVER
+    // photo and nothing structured. A source-only recipe (e.g. just
+    // a paper card kept for reference) without ingredients would
+    // otherwise show "photos only" on the detail page but have no
+    // visible photos, which is confusing — keep it as the default
+    // kind in that case.
+    const coverPhotoCount = photos.filter(
+      (p) => (p.role ?? "cover") === "cover",
+    ).length;
     const payload: RecipeFormOutput = {
       ...values,
-      photoIds: photos.map((p) => p.publicPath),
+      photos: photos.map((p) => ({
+        path: p.publicPath,
+        role: p.role ?? "cover",
+      })),
       kind:
-        photos.length > 0 && ingredientCount === 0
+        coverPhotoCount > 0 && ingredientCount === 0
           ? "photos_only"
           : values.kind,
     };
@@ -259,8 +271,12 @@ export function RecipeForm(props: Props) {
       <section>
         <h2 className="font-display text-lg font-semibold">Photos</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Add up to 8 photos. They&apos;ll appear on the recipe in the order
-          you arrange them.
+          Add up to 8 photos. Mark each one as a{" "}
+          <span className="font-medium text-foreground">Cover</span> (shown as
+          the recipe&apos;s hero) or{" "}
+          <span className="font-medium text-foreground">Source</span> (kept
+          for reference — paper recipe cards, magazine clippings — but hidden
+          from the main view).
         </p>
         <div className="mt-3">
           <PhotoPicker

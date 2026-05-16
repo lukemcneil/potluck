@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MEAL_TYPES, RECIPE_KIND, VISIBILITY } from "@/db/schema";
+import { MEAL_TYPES, PHOTO_ROLES, RECIPE_KIND, VISIBILITY } from "@/db/schema";
 
 export const ingredientSchema = z.object({
   position: z.number().int().nonnegative().default(0),
@@ -54,10 +54,26 @@ export const recipeFormSchema = z.object({
   ingredients: z.array(ingredientSchema).default([]),
   steps: z.array(stepSchema).default([]),
 
-  photoIds: z.array(z.string()).default([]),
+  // Photos are sent as { path, role } pairs so callers can mark a
+  // photo as a `source` (paper recipe card, magazine clipping —
+  // kept for verification) rather than a `cover` (visual hero on
+  // the feed, recipe card, and detail page). Path is the public
+  // /uploads/... URL the upload API hands back. Role defaults to
+  // `cover` so any client still posting plain strings would just
+  // need to wrap them in objects (no role change for them).
+  photos: z
+    .array(
+      z.object({
+        path: z.string().trim().min(1).max(500),
+        role: z.enum(PHOTO_ROLES).default("cover"),
+      }),
+    )
+    .max(16)
+    .default([]),
 });
 export type RecipeFormInput = z.input<typeof recipeFormSchema>;
 export type RecipeFormOutput = z.output<typeof recipeFormSchema>;
+export type RecipeFormPhotoInput = RecipeFormOutput["photos"][number];
 
 // OpenAI's Responses API + structured outputs runs in strict mode which
 // requires (a) the root schema to be `type: "object"` (so no top-level

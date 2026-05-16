@@ -59,7 +59,7 @@ export default async function EditRecipePage({
       note: ing.note ?? null,
     })),
     steps: data.steps.map((s, i) => ({ position: i, body: s.body })),
-    photoIds: data.photos.map((p) => p.path),
+    photos: data.photos.map((p) => ({ path: p.path, role: p.role })),
   };
 
   const initialPhotos: UploadedPhoto[] = data.photos.map((p) => ({
@@ -67,6 +67,7 @@ export default async function EditRecipePage({
     width: p.width ?? 0,
     height: p.height ?? 0,
     placeholder: p.blurhash ?? "",
+    role: p.role,
   }));
 
   return (

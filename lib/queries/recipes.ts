@@ -118,6 +118,10 @@ export async function listRecipeCards(
   if (baseRows.length === 0) return [];
 
   const ids = baseRows.map((r) => r.id);
+  // Hero photos must be `role: cover`. Source-only photos (paper
+  // recipe cards kept for verification) live on the detail page in a
+  // separate section and should never become a recipe's thumbnail.
+  // A recipe with no cover photos shows a text-only card.
   const heroPhotos = db
     .select({
       recipeId: recipePhotos.recipeId,
@@ -126,7 +130,9 @@ export async function listRecipeCards(
       position: recipePhotos.position,
     })
     .from(recipePhotos)
-    .where(inArray(recipePhotos.recipeId, ids))
+    .where(
+      and(inArray(recipePhotos.recipeId, ids), eq(recipePhotos.role, "cover")),
+    )
     .orderBy(recipePhotos.recipeId, recipePhotos.position)
     .all();
 
@@ -228,7 +234,7 @@ export async function searchRecipes(
     .where(and(inArray(recipes.id, ids), ...filterConds))
     .all();
 
-  // Reattach hero photos.
+  // Reattach hero photos — cover-role only, same rules as the feed.
   const heroPhotos = db
     .select({
       recipeId: recipePhotos.recipeId,
@@ -237,7 +243,9 @@ export async function searchRecipes(
       position: recipePhotos.position,
     })
     .from(recipePhotos)
-    .where(inArray(recipePhotos.recipeId, ids))
+    .where(
+      and(inArray(recipePhotos.recipeId, ids), eq(recipePhotos.role, "cover")),
+    )
     .orderBy(recipePhotos.recipeId, recipePhotos.position)
     .all();
   const heroByRecipe = new Map<string, { path: string; blurhash: string | null }>();

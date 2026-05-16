@@ -103,7 +103,7 @@ See `db/schema.ts` (when created). Tables:
 - `users` — id, email, name, **handle** (unique, used in `/u/[handle]`), image, createdAt
 - Auth.js: `accounts`, `sessions`, `verificationTokens`
 - `recipes` — id, authorId, title, slug, description, prepMinutes, cookMinutes, servings, mealType, cuisine, diets (JSON), visibility (`public` | `unlisted` | `private`), kind (`structured` | `photos_only`), createdAt, updatedAt
-- `recipePhotos` — id, recipeId, position, path, blurhash, width, height
+- `recipePhotos` — id, recipeId, position, path, blurhash, width, height, **role** (`"cover" | "source"`, default `cover`). Cover photos drive the recipe's visual identity (carousel, feed cards, OG, collection covers). Source photos are paper recipe cards / magazine clippings / screenshots kept for later verification and surfaced in a quieter "Source materials" section on the detail page. One photo has exactly one role; to use the same shot for both, upload it twice.
 - `recipeIngredients` — id, recipeId, position, quantity, unit, name, note
 - `recipeSteps` — id, recipeId, position, body
 - `tags` — id, name (unique, lowercased)
@@ -300,6 +300,22 @@ Notes:
 ## Photo carousel
 
 - `components/recipe/PhotoCarousel.tsx` is a CSS scroll-snap horizontal scroller with hidden scrollbar, dot indicators, desktop arrow buttons, and an `IntersectionObserver` to track the active slide. Single-photo input falls back to a plain `<Image>`. The first slide gets `priority` so LCP isn't regressed.
+
+## Cover vs source photos
+
+Recipes have two flavors of photo:
+
+- **Cover** — the visual identity. Shown in the detail page carousel, the feed cards, profile/cookbook grids, collection covers, OG metadata. This is what strangers see.
+- **Source** — the original material the recipe was lifted from. Paper recipe cards, magazine clippings, screenshots. Kept around so the author can re-verify quantities later, but **not** part of the visual identity. Rendered in a dashed "Source materials" section below the recipe body on the detail page; opens in a new tab on tap.
+
+Mechanics:
+
+- `recipePhotos.role: "cover" | "source"` (NOT NULL, default `"cover"`). Migration `0005_loose_skrulls.sql` adds the column + an `(recipeId, role)` index so the hero-photo query in `listRecipeCards` / `searchRecipes` / collection-cover fallback can skip source rows cheaply.
+- The form payload changed from `photoIds: string[]` to `photos: Array<{ path, role }>` (see `recipeFormSchema`). `RecipeForm` builds this array off whatever the `PhotoPicker` is holding; each thumbnail in the picker has a Cover/Source toggle button so the author flips roles directly on the photo.
+- New uploads default to `cover` (preserves the pre-role UX — the AI-image flow still produces a cover-photo'd recipe). The author can demote to source on the same screen, or come back later via `/r/[id]/edit`.
+- A recipe with only `source` photos renders as a **text-only card** in feeds and a header-only detail page. Mixed-role recipes show only the cover photos in the carousel and the source photos below in their dedicated section.
+- Authors can flip roles freely on the edit page; `updateRecipeAction` wholesale-replaces the `recipePhotos` rows with whatever the payload says. Files on disk are never deleted by edits — orphan cleanup is still a separate concern.
+- Tests live in `lib/__tests__/validators.test.ts` (default role, mixed roles, role enum guard, empty-path guard) and `lib/actions/__tests__/recipes.test.ts` (round-trip through create, and the "demote my paper card scans to source + upload a beauty shot as the new cover" edit flow).
 
 ## Loading + error boundaries
 

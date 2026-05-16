@@ -189,6 +189,40 @@ describe("createRecipeAction", () => {
     expect(result.error).toMatch(/payload/i);
     expect(testDb.select().from(schema.recipes).all()).toHaveLength(0);
   });
+
+  it("persists per-photo roles (cover vs source) ordered by submission", async () => {
+    // The point of role: writes from the form land in recipePhotos
+    // in the order the user arranged them, with the role they chose
+    // for each one. A user who marks the paper-card scan as source
+    // and the plated shot as cover must get exactly that back.
+    const user = seedUser(testDb, { handle: "wife" });
+    signInAs(user);
+
+    const payload = makeRecipePayload({
+      title: "Mom's chili",
+      photos: [
+        { path: "/uploads/card-front.jpg", role: "source" },
+        { path: "/uploads/card-back.jpg", role: "source" },
+        { path: "/uploads/plated.jpg", role: "cover" },
+      ],
+    });
+
+    await expect(
+      createRecipeAction({}, makeFormData(payload)),
+    ).rejects.toThrow(/^NEXT_REDIRECT/);
+
+    const rows = testDb
+      .select()
+      .from(schema.recipePhotos)
+      .orderBy(schema.recipePhotos.position)
+      .all();
+
+    expect(rows.map((r) => ({ path: r.path, role: r.role }))).toEqual([
+      { path: "/uploads/card-front.jpg", role: "source" },
+      { path: "/uploads/card-back.jpg", role: "source" },
+      { path: "/uploads/plated.jpg", role: "cover" },
+    ]);
+  });
 });
 
 describe("updateRecipeAction", () => {
@@ -320,6 +354,64 @@ describe("updateRecipeAction", () => {
       .all();
     expect(steps).toHaveLength(1);
     expect(steps[0].body).toBe("new step");
+  });
+
+  it("lets an author demote an old cover photo to source and add a new cover", async () => {
+    // The original user flow this exists for: upload paper recipe
+    // photos, AI extracts the recipe, save it. Later you realise the
+    // paper photos shouldn't be the public cover, so you edit and
+    // flip them to `source` while uploading a beauty shot as the
+    // new cover.
+    const user = seedUser(testDb);
+    const recipe = seedRecipe(testDb, user.id, { title: "Mom's Chili" });
+    testDb
+      .insert(schema.recipePhotos)
+      .values([
+        {
+          recipeId: recipe.id,
+          position: 0,
+          path: "/uploads/card-front.jpg",
+          role: "cover",
+        },
+        {
+          recipeId: recipe.id,
+          position: 1,
+          path: "/uploads/card-back.jpg",
+          role: "cover",
+        },
+      ])
+      .run();
+    signInAs(user);
+
+    await expect(
+      updateRecipeAction(
+        recipe.id,
+        {},
+        makeFormData(
+          makeRecipePayload({
+            title: "Mom's Chili",
+            photos: [
+              { path: "/uploads/card-front.jpg", role: "source" },
+              { path: "/uploads/card-back.jpg", role: "source" },
+              { path: "/uploads/plated.jpg", role: "cover" },
+            ],
+          }),
+        ),
+      ),
+    ).rejects.toThrow(/^NEXT_REDIRECT/);
+
+    const after = testDb
+      .select()
+      .from(schema.recipePhotos)
+      .where(eq(schema.recipePhotos.recipeId, recipe.id))
+      .orderBy(schema.recipePhotos.position)
+      .all();
+
+    expect(after.map((r) => ({ path: r.path, role: r.role }))).toEqual([
+      { path: "/uploads/card-front.jpg", role: "source" },
+      { path: "/uploads/card-back.jpg", role: "source" },
+      { path: "/uploads/plated.jpg", role: "cover" },
+    ]);
   });
 });
 

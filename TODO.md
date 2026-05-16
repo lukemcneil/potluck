@@ -205,6 +205,21 @@
   context — anything that isn't an ingredient count or a step.
   Plain-text only; `whitespace-pre-line` preserves the author's line
   breaks.
+- [x] **Cover vs source photo roles**: `recipePhotos.role` column
+  (`"cover" | "source"`, default `cover`). Cover photos are the
+  recipe's visual identity (carousel, feed cards, collection covers,
+  OG); source photos are kept around for verification (paper recipe
+  cards, magazine clippings, screenshots) and surfaced in a quieter
+  "Source materials" section on the detail page. The wire schema
+  switched from `photoIds: string[]` to
+  `photos: Array<{ path, role }>`. New uploads default to cover so
+  the existing AI-import flow is unchanged; authors flip individual
+  photos to source via a Cover/Source toggle under each thumbnail in
+  `PhotoPicker`. Hero queries (`listRecipeCards`, `searchRecipes`,
+  collection fallback) filter on `role = 'cover'` so source-only
+  recipes render text-only cards. 6 new tests cover the validator
+  defaults, mixed-role round-trip through create/update, and the
+  "demote covers to source and add a new cover" edit flow.
 
 ## Investigations (audit, not yet a task)
 

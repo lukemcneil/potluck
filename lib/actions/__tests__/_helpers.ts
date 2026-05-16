@@ -130,7 +130,7 @@ export function makeRecipePayload(
       { body: "Mix the dry ingredients." },
       { body: "Bake at 350F for 20 minutes." },
     ],
-    photoIds: [],
+    photos: [],
     ...overrides,
   };
 }

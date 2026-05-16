@@ -29,6 +29,29 @@ export type Visibility = (typeof VISIBILITY)[number];
 export const RECIPE_KIND = ["structured", "photos_only"] as const;
 export type RecipeKind = (typeof RECIPE_KIND)[number];
 
+/**
+ * What a `recipePhotos` row is FOR:
+ *
+ * - `cover`: a visual / hero photo. Appears in the detail page
+ *   carousel, recipe cards, the feed, OG thumbnails, collection
+ *   covers. The thing you want strangers to see.
+ *
+ * - `source`: original material the recipe was lifted from — a paper
+ *   recipe card, a magazine clipping, a screenshot. Kept around so
+ *   the author can re-verify quantities and steps later, but NOT
+ *   shown as the visual identity of the recipe. Surfaced in a
+ *   collapsible "Source materials" section on the detail page.
+ *
+ * One photo has exactly one role. To use the same shot as cover AND
+ * source, upload it twice — they're independent rows.
+ *
+ * Default is `cover` so every photo created before this column
+ * existed retains its prior behavior (it was already showing up as
+ * the recipe's hero).
+ */
+export const PHOTO_ROLES = ["cover", "source"] as const;
+export type PhotoRole = (typeof PHOTO_ROLES)[number];
+
 export const users = sqliteTable("users", {
   id: text("id")
     .primaryKey()
@@ -166,11 +189,18 @@ export const recipePhotos = sqliteTable(
     blurhash: text("blurhash"),
     width: integer("width"),
     height: integer("height"),
+    role: text("role", { enum: PHOTO_ROLES }).notNull().default("cover"),
     createdAt: integer("createdAt", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
   },
-  (t) => [index("recipe_photos_recipe_idx").on(t.recipeId, t.position)],
+  (t) => [
+    index("recipe_photos_recipe_idx").on(t.recipeId, t.position),
+    // Hero queries (feed, profile, search, collection covers) only
+    // care about cover photos; an (recipeId, role) index lets the
+    // planner skip source rows without scanning the position one.
+    index("recipe_photos_recipe_role_idx").on(t.recipeId, t.role),
+  ],
 );
 
 export const recipeIngredients = sqliteTable(

@@ -105,23 +105,18 @@ export async function createRecipeAction(
         .run();
     }
 
-    if (parsed.photoIds.length) {
-      const photos = collectPhotos(parsed.photoIds);
-      if (photos.length) {
-        tx.insert(recipePhotos)
-          .values(
-            photos.map((p, i) => ({
-              recipeId,
-              position: i,
-              path: p.path,
-              width: p.width ?? null,
-              height: p.height ?? null,
-              blurhash: p.placeholder ?? null,
-              createdAt: now,
-            })),
-          )
-          .run();
-      }
+    if (parsed.photos.length) {
+      tx.insert(recipePhotos)
+        .values(
+          parsed.photos.map((p, i) => ({
+            recipeId,
+            position: i,
+            path: p.path,
+            role: p.role,
+            createdAt: now,
+          })),
+        )
+        .run();
     }
 
     if (parsed.tags.length) {
@@ -149,32 +144,6 @@ export async function createRecipeAction(
   revalidatePath("/feed");
   if (handle) revalidatePath(`/u/${handle}`);
   redirect(`/r/${recipeId}`);
-}
-
-/**
- * Photo metadata is passed via the form payload; the actual files are
- * already on disk (uploaded via /api/upload which also writes the
- * `path` returned to the client). Here we read those PhotoIds out and
- * resolve them to the public path on disk.
- *
- * For now, the client passes back the full upload result (including
- * publicPath). The form payload stores `photoIds` as the FILE PUBLIC
- * PATHS (e.g. "/uploads/abc.jpg") not opaque ids. That's fine — Path
- * is what's stored in `recipePhotos.path` anyway. The "id" naming is
- * historical from the planning phase.
- *
- * If we ever need to revalidate or re-derive metadata from the path,
- * `lib/storage.ts#read(id)` is available.
- */
-function collectPhotos(photoIds: string[]): Array<{
-  path: string;
-  width?: number | null;
-  height?: number | null;
-  placeholder?: string | null;
-}> {
-  return photoIds
-    .filter(Boolean)
-    .map((p) => ({ path: p }));
 }
 
 async function uniqueSlugFor(authorId: string, base: string): Promise<string> {
@@ -286,17 +255,19 @@ export async function updateRecipeAction(
     }
 
     // Photos are stored on disk, but the form payload sends back the
-    // current ordered list of public paths (existing + newly uploaded).
-    // We replace the recipePhotos rows; the on-disk files are left
-    // alone — orphan cleanup is a separate concern.
+    // current ordered list of {path, role} pairs (existing + newly
+    // uploaded, with any role flips the user made). We replace the
+    // recipePhotos rows wholesale; on-disk files are left alone —
+    // orphan cleanup is a separate concern.
     tx.delete(recipePhotos).where(eq(recipePhotos.recipeId, recipeId)).run();
-    if (parsed.photoIds.length) {
+    if (parsed.photos.length) {
       tx.insert(recipePhotos)
         .values(
-          parsed.photoIds.map((path, i) => ({
+          parsed.photos.map((p, i) => ({
             recipeId,
             position: i,
-            path,
+            path: p.path,
+            role: p.role,
             createdAt: now,
           })),
         )

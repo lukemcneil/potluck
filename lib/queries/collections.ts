@@ -66,7 +66,9 @@ export async function listCollectionsForUser(
     .all();
   const countMap = new Map(counts.map((c) => [c.collectionId, c.n]));
 
-  // Fall back to the first recipe's hero photo when no explicit cover.
+  // Fall back to the first recipe's COVER hero photo when no
+  // explicit collection cover is set. Source-only photos must never
+  // surface as a collection thumbnail.
   const fallbackCovers = db
     .select({
       collectionId: collectionRecipes.collectionId,
@@ -81,6 +83,7 @@ export async function listCollectionsForUser(
           rows.map((r) => r.id),
         ),
         eq(recipePhotos.position, 0),
+        eq(recipePhotos.role, "cover"),
       ),
     )
     .orderBy(collectionRecipes.collectionId, asc(collectionRecipes.position))
@@ -156,6 +159,9 @@ export async function getCollectionByHandleSlug(
   );
 
   const ids = visibleList.map((r) => r.id);
+  // Cards in a collection use the same hero rule as the feed: first
+  // cover photo wins; recipes with only source photos render as a
+  // text-only card.
   const photos = ids.length
     ? db
         .select({
@@ -165,7 +171,9 @@ export async function getCollectionByHandleSlug(
           position: recipePhotos.position,
         })
         .from(recipePhotos)
-        .where(inArray(recipePhotos.recipeId, ids))
+        .where(
+          and(inArray(recipePhotos.recipeId, ids), eq(recipePhotos.role, "cover")),
+        )
         .orderBy(recipePhotos.recipeId, recipePhotos.position)
         .all()
     : [];

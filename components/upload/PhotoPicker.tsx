@@ -2,15 +2,23 @@
 
 import { useCallback, useRef, useState } from "react";
 import Image from "next/image";
-import { Camera, ImagePlus, X, GripVertical, Loader2 } from "lucide-react";
+import { Camera, ImagePlus, X, GripVertical, Loader2, Star, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { PhotoRole } from "@/db/schema";
 
 export type UploadedPhoto = {
   publicPath: string;
   width: number;
   height: number;
   placeholder: string;
+  /**
+   * Whether this photo is the recipe's visual identity (`cover`) or
+   * original source material kept for verification (`source`). New
+   * uploads default to `cover` so the picker behaves identically to
+   * the pre-role version unless the caller tells us otherwise.
+   */
+  role?: PhotoRole;
 };
 
 type Props = {
@@ -19,13 +27,24 @@ type Props = {
   maxPhotos?: number;
   /** Trigger the camera capture by default (mobile). */
   defaultCamera?: boolean;
+  /**
+   * Show the per-photo role toggle (cover vs source). On by default —
+   * pass `false` from surfaces where roles aren't useful (e.g. a
+   * future avatar picker).
+   */
+  showRoleToggle?: boolean;
 };
+
+function roleOf(p: UploadedPhoto): PhotoRole {
+  return p.role ?? "cover";
+}
 
 export function PhotoPicker({
   photos,
   onChange,
   maxPhotos = 8,
   defaultCamera = false,
+  showRoleToggle = true,
 }: Props) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const libraryInputRef = useRef<HTMLInputElement>(null);
@@ -34,6 +53,8 @@ export function PhotoPicker({
   const [dragOver, setDragOver] = useState(false);
 
   const remaining = Math.max(0, maxPhotos - photos.length);
+  const coverCount = photos.filter((p) => roleOf(p) === "cover").length;
+  const sourceCount = photos.length - coverCount;
 
   const handleFiles = useCallback(
     async (files: FileList | File[] | null) => {
@@ -57,7 +78,15 @@ export function PhotoPicker({
           throw new Error(body?.error ?? `Upload failed (${res.status})`);
         }
         const data = (await res.json()) as { files: UploadedPhoto[] };
-        onChange([...photos, ...data.files]);
+        // /api/upload doesn't know about roles, so freshly-uploaded
+        // photos arrive role-less. Default them to `cover` here so
+        // they show up as the visual identity unless the user flips
+        // them — preserves the pre-role UX for the common case.
+        const stamped: UploadedPhoto[] = data.files.map((f) => ({
+          ...f,
+          role: f.role ?? "cover",
+        }));
+        onChange([...photos, ...stamped]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
       } finally {
@@ -84,6 +113,13 @@ export function PhotoPicker({
     if (index >= photos.length - 1) return;
     const next = [...photos];
     [next[index], next[index + 1]] = [next[index + 1], next[index]];
+    onChange(next);
+  };
+
+  const toggleRole = (index: number) => {
+    const next = photos.map((p, i) =>
+      i === index ? { ...p, role: roleOf(p) === "cover" ? "source" as const : "cover" as const } : p,
+    );
     onChange(next);
   };
 
@@ -172,56 +208,107 @@ export function PhotoPicker({
         </div>
       ) : (
         <>
+          {showRoleToggle && (
+            <p className="mb-2 text-xs text-muted-foreground">
+              Tap{" "}
+              <span className="rounded bg-primary/15 px-1 font-medium text-primary">
+                Cover
+              </span>{" "}
+              or{" "}
+              <span className="rounded bg-muted px-1 font-medium">Source</span>{" "}
+              under a photo to choose whether it shows up as the recipe&apos;s
+              hero image or stays hidden as a reference for later.
+            </p>
+          )}
           <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-            {photos.map((p, i) => (
-              <li
-                key={p.publicPath}
-                className="group relative aspect-square overflow-hidden rounded-xl bg-muted"
-              >
-                <Image
-                  src={p.publicPath}
-                  alt=""
-                  fill
-                  sizes="(max-width: 640px) 33vw, 200px"
-                  className="object-cover"
-                  placeholder="blur"
-                  blurDataURL={p.placeholder}
-                />
-                <div className="absolute inset-x-1 top-1 flex justify-between">
-                  <span className="rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                    {i + 1}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Remove photo"
-                    onClick={() => removeAt(i)}
-                    className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                  >
-                    <X className="size-3.5" />
-                  </button>
+            {photos.map((p, i) => {
+              const role = roleOf(p);
+              const isCover = role === "cover";
+              return (
+              <li key={p.publicPath} className="space-y-1">
+                <div
+                  className={cn(
+                    "group relative aspect-square overflow-hidden rounded-xl bg-muted",
+                    !isCover &&
+                      "opacity-70 ring-1 ring-inset ring-border",
+                  )}
+                >
+                  <Image
+                    src={p.publicPath}
+                    alt=""
+                    fill
+                    sizes="(max-width: 640px) 33vw, 200px"
+                    className="object-cover"
+                    placeholder="blur"
+                    blurDataURL={p.placeholder}
+                  />
+                  <div className="absolute inset-x-1 top-1 flex justify-between">
+                    <span className="rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      {i + 1}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Remove photo"
+                      onClick={() => removeAt(i)}
+                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                  <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1">
+                    <button
+                      type="button"
+                      aria-label="Move left"
+                      onClick={() => moveLeft(i)}
+                      disabled={i === 0}
+                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <GripVertical className="size-3.5 -rotate-90" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Move right"
+                      onClick={() => moveRight(i)}
+                      disabled={i === photos.length - 1}
+                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <GripVertical className="size-3.5 rotate-90" />
+                    </button>
+                  </div>
                 </div>
-                <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1">
+                {showRoleToggle && (
                   <button
                     type="button"
-                    aria-label="Move left"
-                    onClick={() => moveLeft(i)}
-                    disabled={i === 0}
-                    className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
+                    onClick={() => toggleRole(i)}
+                    aria-pressed={isCover}
+                    aria-label={
+                      isCover
+                        ? "Photo is shown as a cover image. Click to make it source material instead."
+                        : "Photo is hidden as source material. Click to make it a cover image instead."
+                    }
+                    title={
+                      isCover
+                        ? "Cover — shown as the recipe's hero. Click to demote to source."
+                        : "Source — kept for reference, not shown as the hero. Click to promote to cover."
+                    }
+                    className={cn(
+                      "flex w-full items-center justify-center gap-1 rounded-md px-1 py-1 text-[11px] font-medium transition",
+                      isCover
+                        ? "bg-primary/15 text-primary hover:bg-primary/25"
+                        : "bg-muted text-muted-foreground hover:bg-muted/70",
+                    )}
                   >
-                    <GripVertical className="size-3.5 -rotate-90" />
+                    {isCover ? (
+                      <Star className="size-3" aria-hidden />
+                    ) : (
+                      <FileText className="size-3" aria-hidden />
+                    )}
+                    {isCover ? "Cover" : "Source"}
                   </button>
-                  <button
-                    type="button"
-                    aria-label="Move right"
-                    onClick={() => moveRight(i)}
-                    disabled={i === photos.length - 1}
-                    className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <GripVertical className="size-3.5 rotate-90" />
-                  </button>
-                </div>
+                )}
               </li>
-            ))}
+              );
+            })}
 
             {remaining > 0 && (
               <li>
@@ -248,6 +335,13 @@ export function PhotoPicker({
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
             <span>
               {photos.length} of {maxPhotos} photos
+              {showRoleToggle && photos.length > 0 && (
+                <>
+                  {" \u2022 "}
+                  {coverCount} cover{coverCount === 1 ? "" : "s"}, {sourceCount}{" "}
+                  source
+                </>
+              )}
             </span>
             <button
               type="button"
