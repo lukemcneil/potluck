@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { PhotoLightbox } from "@/components/recipe/PhotoLightbox";
 
 export type CarouselPhoto = {
   id: string;
@@ -28,6 +29,26 @@ export function PhotoCarousel({ photos, alt, priority = true }: Props) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const slideRefs = useRef<Array<HTMLLIElement | null>>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  // Lightbox state: which photo to open, and whether it's open.
+  // Tap-vs-drag is disambiguated below with a small pixel threshold
+  // so dragging the carousel doesn't accidentally open the viewer.
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
+
+  function handlePointerDown(e: React.PointerEvent) {
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+  }
+  function handlePointerUp(e: React.PointerEvent, index: number) {
+    const start = pointerStart.current;
+    pointerStart.current = null;
+    if (!start) return;
+    const dx = Math.abs(e.clientX - start.x);
+    const dy = Math.abs(e.clientY - start.y);
+    // 8px feels right empirically — small enough that a stationary tap
+    // is unambiguous, large enough that fingers shaking on a touchscreen
+    // don't accidentally trigger the lightbox while scrolling the strip.
+    if (dx < 8 && dy < 8) setLightboxIndex(index);
+  }
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -67,20 +88,35 @@ export function PhotoCarousel({ photos, alt, priority = true }: Props) {
   if (photos.length === 1) {
     const p = photos[0];
     return (
-      <div className="relative overflow-hidden rounded-2xl bg-muted">
-        <div className="relative aspect-4/3 w-full">
-          <Image
-            src={p.path}
-            alt={alt}
-            fill
-            sizes="(max-width: 768px) 100vw, 768px"
-            className="object-cover"
-            placeholder={p.blurhash ? "blur" : undefined}
-            blurDataURL={p.blurhash ?? undefined}
-            priority={priority}
-          />
-        </div>
-      </div>
+      <>
+        <button
+          type="button"
+          onClick={() => setLightboxIndex(0)}
+          aria-label="Open photo at full size"
+          className="relative block w-full overflow-hidden rounded-2xl bg-muted cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          <div className="relative aspect-4/3 w-full">
+            <Image
+              src={p.path}
+              alt={alt}
+              fill
+              sizes="(max-width: 768px) 100vw, 768px"
+              className="object-cover"
+              placeholder={p.blurhash ? "blur" : undefined}
+              blurDataURL={p.blurhash ?? undefined}
+              priority={priority}
+            />
+          </div>
+        </button>
+        <PhotoLightbox
+          photos={photos}
+          open={lightboxIndex !== null}
+          initialIndex={lightboxIndex ?? 0}
+          onOpenChange={(open) => {
+            if (!open) setLightboxIndex(null);
+          }}
+        />
+      </>
     );
   }
 
@@ -100,13 +136,15 @@ export function PhotoCarousel({ photos, alt, priority = true }: Props) {
               }}
               data-index={i}
               className="relative aspect-4/3 w-full shrink-0 snap-start"
+              onPointerDown={handlePointerDown}
+              onPointerUp={(e) => handlePointerUp(e, i)}
             >
               <Image
                 src={p.path}
                 alt={i === 0 ? alt : ""}
                 fill
                 sizes="(max-width: 768px) 100vw, 768px"
-                className="object-cover"
+                className="object-cover cursor-zoom-in"
                 placeholder={p.blurhash ? "blur" : undefined}
                 blurDataURL={p.blurhash ?? undefined}
                 priority={priority && i === 0}
@@ -164,6 +202,15 @@ export function PhotoCarousel({ photos, alt, priority = true }: Props) {
       <div className="pointer-events-none absolute top-3 right-3 rounded-full bg-black/55 px-2 py-0.5 text-xs font-medium text-white tabular-nums">
         {activeIndex + 1} / {photos.length}
       </div>
+
+      <PhotoLightbox
+        photos={photos}
+        open={lightboxIndex !== null}
+        initialIndex={lightboxIndex ?? 0}
+        onOpenChange={(open) => {
+          if (!open) setLightboxIndex(null);
+        }}
+      />
     </div>
   );
 }

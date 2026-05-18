@@ -31,6 +31,7 @@ import { PhotoCarousel } from "@/components/recipe/PhotoCarousel";
 import { PrintButton } from "@/components/recipe/PrintButton";
 import { ShareButton } from "@/components/recipe/ShareButton";
 import { DeleteRecipeButton } from "@/components/recipe/DeleteRecipeButton";
+import { SourcePhotosGrid } from "@/components/recipe/SourcePhotosGrid";
 import { RecipeBody } from "@/components/recipe/RecipeBody";
 import { RatingControl } from "@/components/recipe/RatingControl";
 import { CommentsSection } from "@/components/recipe/CommentsSection";
@@ -294,7 +295,7 @@ export default async function RecipePage({
 
       <RecipeNotes notes={recipe.notes ?? null} />
 
-      <SourcePhotosSection
+      <SourcePhotosGrid
         photos={sourcePhotos.map((p) => ({
           id: p.id,
           path: p.path,
@@ -415,71 +416,6 @@ function RecipeNotes({ notes }: { notes: string | null }) {
       <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
         {trimmed}
       </p>
-    </section>
-  );
-}
-
-/**
- * Original photos the author kept around for later verification —
- * paper recipe cards, magazine clippings, screenshots of a parent
- * site's render. These are NOT the recipe's visual identity (the
- * `cover` photos at the top fill that role), so we surface them in
- * a quieter section below the main content.
- *
- * Each thumbnail opens the raw image in a new tab so the cook can
- * zoom into smudged handwriting / fine print.
- *
- * Stays public — even non-author viewers see source materials. That
- * provenance ("here's the original card mom wrote") is a feature,
- * not metadata to hide.
- */
-function SourcePhotosSection({
-  photos,
-}: {
-  photos: Array<{ id: string; path: string; blurhash: string | null }>;
-}) {
-  if (photos.length === 0) return null;
-  return (
-    <section
-      className="mt-8 rounded-2xl border border-dashed border-border bg-card/40 p-4 sm:p-5"
-      aria-labelledby="source-materials-heading"
-    >
-      <h2
-        id="source-materials-heading"
-        className="font-display text-base font-semibold tracking-tight"
-      >
-        Source materials
-      </h2>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Original photos kept for reference — the paper card, the magazine
-        page, or whatever this recipe was lifted from. Tap to open the full
-        image.
-      </p>
-      <ul className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-        {photos.map((p) => (
-          <li
-            key={p.id}
-            className="group relative aspect-square overflow-hidden rounded-lg bg-muted"
-          >
-            <a
-              href={p.path}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block h-full w-full"
-              aria-label="Open source photo at full size"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={p.path}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
-              />
-            </a>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }
