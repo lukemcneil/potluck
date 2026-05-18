@@ -170,9 +170,19 @@ export function AddRecipeFlow({
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
       const review = buildReviewPayload(body.recipe, body.discrepancies ?? []);
+      // Photos handed to the AI extractor are by definition source
+      // material — the user is OCRing them, not framing them as the
+      // recipe's beauty shot. Stamp them as `source` here so they
+      // don't quietly become the recipe's cover. The Cover/Source
+      // toggle on each thumbnail in PhotoPicker still lets the user
+      // promote any of them to cover before saving.
+      const photosAsSource: UploadedPhoto[] = photos.map((p) => ({
+        ...p,
+        role: "source",
+      }));
       setStage({
         kind: "form",
-        photos,
+        photos: photosAsSource,
         prefill: prefillFromReview(body.recipe, review),
         cost: body.cost ?? null,
         verification: {

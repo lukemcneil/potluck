@@ -212,10 +212,13 @@
   cards, magazine clippings, screenshots) and surfaced in a quieter
   "Source materials" section on the detail page. The wire schema
   switched from `photoIds: string[]` to
-  `photos: Array<{ path, role }>`. New uploads default to cover so
-  the existing AI-import flow is unchanged; authors flip individual
-  photos to source via a Cover/Source toggle under each thumbnail in
-  `PhotoPicker`. Hero queries (`listRecipeCards`, `searchRecipes`,
+  `photos: Array<{ path, role }>`. Defaults are flow-aware: photos
+  the user picks directly in `PhotoPicker` default to `cover` (they
+  picked them, they're presumably visual), while photos handed to
+  the AI extractor in `AddRecipeFlow` are stamped as `source` before
+  hitting the review form (the user is OCRing them, not framing
+  them). Authors flip roles via the Cover/Source toggle under each
+  thumbnail. Hero queries (`listRecipeCards`, `searchRecipes`,
   collection fallback) filter on `role = 'cover'` so source-only
   recipes render text-only cards. 6 new tests cover the validator
   defaults, mixed-role round-trip through create/update, and the

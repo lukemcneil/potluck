@@ -312,7 +312,9 @@ Mechanics:
 
 - `recipePhotos.role: "cover" | "source"` (NOT NULL, default `"cover"`). Migration `0005_loose_skrulls.sql` adds the column + an `(recipeId, role)` index so the hero-photo query in `listRecipeCards` / `searchRecipes` / collection-cover fallback can skip source rows cheaply.
 - The form payload changed from `photoIds: string[]` to `photos: Array<{ path, role }>` (see `recipeFormSchema`). `RecipeForm` builds this array off whatever the `PhotoPicker` is holding; each thumbnail in the picker has a Cover/Source toggle button so the author flips roles directly on the photo.
-- New uploads default to `cover` (preserves the pre-role UX — the AI-image flow still produces a cover-photo'd recipe). The author can demote to source on the same screen, or come back later via `/r/[id]/edit`.
+- Defaults are flow-aware:
+  - **Direct upload via `PhotoPicker`** (hand-typed recipe, edit page, "Just save the photos" path) → `cover`. The photo the user actively picked is presumed to be visual identity.
+  - **"Extract recipe with AI" path** in `AddRecipeFlow` → `source`. The user is OCRing the photo, not framing it as a beauty shot, so we stamp `role: "source"` before handing it into `RecipeForm`. The Cover/Source toggle still lets them promote any of them to cover before saving.
 - A recipe with only `source` photos renders as a **text-only card** in feeds and a header-only detail page. Mixed-role recipes show only the cover photos in the carousel and the source photos below in their dedicated section.
 - Authors can flip roles freely on the edit page; `updateRecipeAction` wholesale-replaces the `recipePhotos` rows with whatever the payload says. Files on disk are never deleted by edits — orphan cleanup is still a separate concern.
 - Tests live in `lib/__tests__/validators.test.ts` (default role, mixed roles, role enum guard, empty-path guard) and `lib/actions/__tests__/recipes.test.ts` (round-trip through create, and the "demote my paper card scans to source + upload a beauty shot as the new cover" edit flow).
