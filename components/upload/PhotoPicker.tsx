@@ -2,7 +2,16 @@
 
 import { useCallback, useRef, useState } from "react";
 import Image from "next/image";
-import { Camera, ImagePlus, X, GripVertical, Loader2, Star, FileText } from "lucide-react";
+import {
+  Camera,
+  ImagePlus,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Star,
+  FileText,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { PhotoRole } from "@/db/schema";
@@ -228,7 +237,7 @@ export function PhotoPicker({
               <li key={p.publicPath} className="space-y-1">
                 <div
                   className={cn(
-                    "group relative aspect-square overflow-hidden rounded-xl bg-muted",
+                    "relative aspect-square overflow-hidden rounded-xl bg-muted",
                     !isCover &&
                       "opacity-70 ring-1 ring-inset ring-border",
                   )}
@@ -242,6 +251,20 @@ export function PhotoPicker({
                     placeholder="blur"
                     blurDataURL={p.placeholder}
                   />
+                  {/*
+                    All overlay controls (position badge, remove, move
+                    left, move right) stay visible at all times so the
+                    affordances work on touch — `group-hover` doesn't
+                    fire on tap, which left the buttons effectively
+                    invisible on mobile under the previous design.
+
+                    Button hit-targets are size-7 (28px); combined
+                    with the dark translucent backdrop they pop on
+                    any image without crowding the 33vw mobile
+                    thumbnail too much. We hide the move buttons
+                    entirely when there's only one photo — there's
+                    nothing to reorder.
+                  */}
                   <div className="absolute inset-x-1 top-1 flex justify-between">
                     <span className="rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                       {i + 1}
@@ -250,31 +273,33 @@ export function PhotoPicker({
                       type="button"
                       aria-label="Remove photo"
                       onClick={() => removeAt(i)}
-                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+                      className="flex size-7 items-center justify-center rounded-md bg-black/60 text-white shadow-sm transition-colors hover:bg-black/75 focus:bg-black/75"
                     >
-                      <X className="size-3.5" />
+                      <X className="size-4" />
                     </button>
                   </div>
-                  <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1">
-                    <button
-                      type="button"
-                      aria-label="Move left"
-                      onClick={() => moveLeft(i)}
-                      disabled={i === 0}
-                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <GripVertical className="size-3.5 -rotate-90" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Move right"
-                      onClick={() => moveRight(i)}
-                      disabled={i === photos.length - 1}
-                      className="flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed disabled:opacity-30"
-                    >
-                      <GripVertical className="size-3.5 rotate-90" />
-                    </button>
-                  </div>
+                  {photos.length > 1 && (
+                    <div className="absolute inset-x-1 bottom-1 flex justify-between gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Move photo ${i + 1} left`}
+                        onClick={() => moveLeft(i)}
+                        disabled={i === 0}
+                        className="flex size-7 items-center justify-center rounded-md bg-black/60 text-white shadow-sm transition-colors hover:bg-black/75 focus:bg-black/75 disabled:cursor-not-allowed disabled:bg-black/30"
+                      >
+                        <ChevronLeft className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Move photo ${i + 1} right`}
+                        onClick={() => moveRight(i)}
+                        disabled={i === photos.length - 1}
+                        className="flex size-7 items-center justify-center rounded-md bg-black/60 text-white shadow-sm transition-colors hover:bg-black/75 focus:bg-black/75 disabled:cursor-not-allowed disabled:bg-black/30"
+                      >
+                        <ChevronRight className="size-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {showRoleToggle && (
                   <button
