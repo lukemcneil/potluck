@@ -3,7 +3,18 @@
 import { useRef, useState, useTransition } from "react";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2, Loader2, Globe, Lock, EyeOff, X } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Loader2,
+  Globe,
+  Lock,
+  EyeOff,
+  X,
+  ChevronUp,
+  ChevronDown,
+  CornerDownRight,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -476,6 +487,8 @@ export function RecipeForm(props: Props) {
           {steps.fields.map((field, i) => {
             const flag = stepFlagFor(field.id);
             const showStrip = flag && stepUnresolved(field.id);
+            const isFirst = i === 0;
+            const isLast = i === steps.fields.length - 1;
             return (
               <li
                 key={field.id}
@@ -508,14 +521,57 @@ export function RecipeForm(props: Props) {
                     rows={2}
                     className="flex-1"
                   />
-                  <button
-                    type="button"
-                    onClick={() => steps.remove(i)}
-                    aria-label="Remove step"
-                    className="mt-1 flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
+                  {/*
+                    Per-step controls. Laid out as a 2x2 grid so the
+                    column matches the textarea's `rows={2}` height
+                    without inflating the row. All four buttons are
+                    always visible (touch screens never fire :hover)
+                    and size-8 (32 px) hits the iOS min tap target.
+                    Insert-below + the chevrons together remove the
+                    "must add at end and re-chevron upward" workflow.
+                  */}
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => steps.move(i, i - 1)}
+                      disabled={isFirst}
+                      aria-label={`Move step ${i + 1} up`}
+                      className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    >
+                      <ChevronUp className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => steps.move(i, i + 1)}
+                      disabled={isLast}
+                      aria-label={`Move step ${i + 1} down`}
+                      className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                    >
+                      <ChevronDown className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        steps.insert(i + 1, {
+                          position: i + 1,
+                          body: "",
+                        })
+                      }
+                      aria-label={`Insert a new step after step ${i + 1}`}
+                      title="Insert step below"
+                      className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <CornerDownRight className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => steps.remove(i)}
+                      aria-label={`Remove step ${i + 1}`}
+                      className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
                 </div>
               </li>
             );
