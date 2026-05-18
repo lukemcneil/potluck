@@ -22,6 +22,7 @@ import {
 import { storage } from "@/lib/storage";
 import { computeCost, formatUsd, type CostBreakdown } from "@/lib/ai/pricing";
 import { fetchRecipePage } from "@/lib/recipe-import/fetch";
+import { findJsonLdRecipe, formatJsonLdAsText } from "@/lib/recipe-import/jsonld";
 import {
   issuesToDiscrepancies,
   type Discrepancy,
@@ -798,7 +799,52 @@ export async function buildExtractUserContent(
 ): Promise<UserContent> {
   if (input.kind === "url") {
     const page = await fetchRecipePage(input.url);
+
+    // JSON-LD fast path: when the page embeds a schema.org Recipe in
+    // <script type="application/ld+json">, hand the LLM that compact
+    // structured payload instead of the full ~150K HTML. The model
+    // STILL does the work (splitting "1 1/2 cups flour, sifted" into
+    // quantity/unit/name/note, inferring mealType/cuisine/diets,
+    // marking confidence on ambiguous fields) — we just feed it
+    // clean source instead of noisy source. This roughly halves
+    // input tokens, drops output verbosity (less to filter), and
+    // cuts latency from ~10–20 s to ~3–6 s on the major recipe
+    // blogs that use Yoast / RankMath / WP Recipe Maker / Tasty
+    // Recipes (the vast majority).
+    //
+    // Falls back to the original full-HTML path when JSON-LD is
+    // absent, malformed, or empty (no ingredients AND no steps).
+    // We never want a misuse of schema.org on some non-recipe page
+    // to silently downgrade the import — the HTML path is the
+    // honest source of truth when JSON-LD lies.
+    const jsonLd = findJsonLdRecipe(page.html);
+    if (jsonLd) {
+      const compact = formatJsonLdAsText(jsonLd);
+      console.log(
+        `[ai.extract.url] json-ld fast path url=${page.finalUrl} ` +
+          `compact_chars=${compact.length} html_chars=${page.html.length}`,
+      );
+      return [
+        {
+          type: "text" as const,
+          text:
+            `The user wants to import a recipe from this page: ${page.finalUrl}\n\n` +
+            `The page embeds a schema.org Recipe in JSON-LD. The structured ` +
+            `data is shown below — extract the recipe FROM IT. Preserve ` +
+            `ingredient and step text verbatim; you still need to split each ` +
+            `ingredient into quantity/unit/name/note and infer the schema ` +
+            `fields (mealType, cuisine, diets) the JSON-LD doesn't cover. ` +
+            `Times come as ISO 8601 durations (e.g. "PT30M" = 30 min, "PT1H15M" = 75 min).\n\n` +
+            `--- BEGIN JSON-LD RECIPE ---\n${compact}\n--- END JSON-LD RECIPE ---`,
+        },
+      ];
+    }
+
     const html = trimHtmlForLlm(page.html);
+    console.log(
+      `[ai.extract.url] html fallback url=${page.finalUrl} ` +
+        `chars=${html.length} (no usable JSON-LD)`,
+    );
     return [
       {
         type: "text" as const,
