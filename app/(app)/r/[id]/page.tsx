@@ -30,6 +30,7 @@ import { SaveButton } from "@/components/recipe/SaveButton";
 import { PhotoCarousel } from "@/components/recipe/PhotoCarousel";
 import { PrintButton } from "@/components/recipe/PrintButton";
 import { ShareButton } from "@/components/recipe/ShareButton";
+import { DeleteRecipeButton } from "@/components/recipe/DeleteRecipeButton";
 import { RecipeBody } from "@/components/recipe/RecipeBody";
 import { RatingControl } from "@/components/recipe/RatingControl";
 import { CommentsSection } from "@/components/recipe/CommentsSection";
@@ -239,15 +240,22 @@ export default async function RecipePage({
             </Button>
           )}
           {isAuthor && (
-            <Button
-              render={<Link href={`/r/${recipe.id}/edit`} />}
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-            >
-              <Pencil className="size-3.5" />
-              Edit
-            </Button>
+            <>
+              <Button
+                render={<Link href={`/r/${recipe.id}/edit`} />}
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+              >
+                <Pencil className="size-3.5" />
+                Edit
+              </Button>
+              <DeleteRecipeButton
+                recipeId={recipe.id}
+                authorHandle={author?.handle ?? null}
+                recipeTitle={recipe.title}
+              />
+            </>
           )}
           {!isAuthor && saveState && (
             <SaveButton
