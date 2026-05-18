@@ -457,6 +457,21 @@ All three actions fan out to **push notifications** (see below) for the recipe a
 
 The manifest also declares Android `shortcuts` for "New recipe" and "Open feed" so a long-press on the home-screen icon gives quick actions.
 
+**Platform reality check** (May 2026): Web Share Target is **Android-Chrome-only** in practice. iOS Safari has not implemented the API and there's no public timeline. Desktop browsers don't expose anything. The realistic cross-platform path for "share a recipe to Potluck" is therefore:
+
+- **Android**: install the PWA from the prod URL, then any app's share sheet shows "Potluck". **Gotcha**: the install pins the manifest to whatever host served it at install time, so a stale dev-mode install (localhost, ngrok, an old tunnel host) intercepts share intents and opens that URL. Fix is uninstall + reinstall from the right host — the InstallSheet's Android section calls this out, and the manifest's `id: "/"` keeps Chrome's app-identity stable across reinstalls.
+- **iOS**: no share-to-Potluck possible. The fallback is copy-the-URL-then-paste, which the URL stage of `/add` has a one-tap "Paste link from clipboard" button for (`navigator.clipboard.readText()`, only fires inside a user-gesture click handler to keep iOS's paste-permission popup scoped). The InstallSheet's iOS section explains this flow.
+- **Desktop / any other**: same paste flow.
+
+## Cook mode: screen wake lock
+
+`components/recipe/CookMode.tsx` requests a Screen Wake Lock so the user's device doesn't lock during a cook session. Two non-obvious bits of the API the implementation has to handle:
+
+1. **Auto-release on visibility change**. The system releases the lock whenever the page goes hidden (tab switch, screen-off, foreground app change, iOS Low Power Mode kicking in). The `WakeLockSentinel` object stays around but its `.released` flag flips to true.
+2. **You must listen for the `release` event** to know the lock dropped. The previous implementation only checked `wakeLockRef.current == null` on `visibilitychange`, which meant: first auto-release left a stale (released) sentinel in the ref, the next visibility-back check skipped the re-acquire, and the screen would time out for the rest of the session. The fix is to attach `lock.addEventListener("release", ...)` that clears the ref, plus a belt-and-suspenders `.released` check inside `acquire()` for engines that fail to fire the event (Safari has historically been inconsistent).
+
+There's no fallback for environments without `navigator.wakeLock`. The flag-flick is silent: cook mode just behaves like any other page in that case (system idle timeout applies). The two known cases that block the lock are iOS Low Power Mode and (rarely) browsers in some Linux desktop window managers; both are user-controllable.
+
 ## Push notifications
 
 VAPID-based Web Push, opt-in per-device.

@@ -22,6 +22,14 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   const base: MetadataRoute.Manifest = {
+    // Stable app identity, independent of which host is serving the
+    // manifest. Without `id`, Chrome derives identity from
+    // `start_url`, which means an install from a dev URL (localhost,
+    // ngrok, etc) and an install from prod look like the SAME app to
+    // the platform — and a stale install can quietly intercept share
+    // intents, sending the user to a localhost URL on Android. The
+    // value here just has to be stable; "/" is the canonical choice.
+    id: "/",
     name: "Potluck",
     short_name: "Potluck",
     description:

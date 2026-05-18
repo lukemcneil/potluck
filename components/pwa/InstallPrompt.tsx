@@ -321,52 +321,110 @@ function InstallInstructionsDialog({
 
 function IosInstructions() {
   return (
-    <ol className="list-decimal space-y-3 pl-5 text-sm">
-      <li>
-        Tap the{" "}
-        <Chip>
-          <Share className="size-3.5" aria-hidden /> Share
-        </Chip>{" "}
-        button at the bottom of Safari.
-      </li>
-      <li>
-        Scroll down and choose{" "}
-        <Chip>
-          <Plus className="size-3.5" aria-hidden /> Add to Home Screen
-        </Chip>
-        .
-      </li>
-      <li>
-        Tap <strong>Add</strong>. Potluck will live next to your other apps.
-      </li>
-    </ol>
+    <>
+      <ol className="list-decimal space-y-3 pl-5 text-sm">
+        <li>
+          Tap the{" "}
+          <Chip>
+            <Share className="size-3.5" aria-hidden /> Share
+          </Chip>{" "}
+          button at the bottom of Safari.
+        </li>
+        <li>
+          Scroll down and choose{" "}
+          <Chip>
+            <Plus className="size-3.5" aria-hidden /> Add to Home Screen
+          </Chip>
+          .
+        </li>
+        <li>
+          Tap <strong>Add</strong>. Potluck will live next to your other apps.
+        </li>
+      </ol>
+
+      {/*
+        iOS Safari doesn't implement the Web Share Target API — there's
+        no "Share to Potluck" entry in the share sheet on iPhone, and
+        Apple hasn't shipped support for it. The realistic flow is
+        copy-the-URL-then-paste, which the URL stage in /add now has a
+        one-tap button for. Calling it out here so iOS users aren't
+        left wondering why "share to Potluck" doesn't exist.
+      */}
+      <div className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">
+          Sharing recipes to Potluck on iPhone
+        </p>
+        <p className="mt-1">
+          Safari doesn&apos;t support &ldquo;Share to Potluck&rdquo; the way
+          Android does. To import a recipe from a website: tap{" "}
+          <strong>Share &rarr; Copy</strong> in Safari, open Potluck, tap{" "}
+          <strong>Paste a URL</strong>, then tap{" "}
+          <strong>Paste link from clipboard</strong>.
+        </p>
+      </div>
+    </>
   );
 }
 
 function AndroidInstructions() {
   return (
-    <ol className="list-decimal space-y-3 pl-5 text-sm">
-      <li>
-        Tap the{" "}
-        <Chip>
-          <MoreVertical className="size-3.5" aria-hidden /> menu
-        </Chip>{" "}
-        button in the top-right of Chrome.
-      </li>
-      <li>
-        Choose <strong>Install app</strong> (or{" "}
-        <strong>Add to Home screen</strong> on older Chrome versions).
-      </li>
-      <li>
-        Confirm. Potluck will appear in your launcher just like a normal app.
-      </li>
-      <li className="text-muted-foreground">
-        If you don&apos;t see <em>Install app</em> in the menu, Chrome may
-        still be waiting for &ldquo;engagement&rdquo; — try opening a few
-        recipes and revisit this dialog.
-      </li>
-    </ol>
+    <>
+      <ol className="list-decimal space-y-3 pl-5 text-sm">
+        <li>
+          Tap the{" "}
+          <Chip>
+            <MoreVertical className="size-3.5" aria-hidden /> menu
+          </Chip>{" "}
+          button in the top-right of Chrome.
+        </li>
+        <li>
+          Choose <strong>Install app</strong> (or{" "}
+          <strong>Add to Home screen</strong> on older Chrome versions).
+        </li>
+        <li>
+          Confirm. Potluck will appear in your launcher just like a normal app.
+        </li>
+        <li className="text-muted-foreground">
+          If you don&apos;t see <em>Install app</em> in the menu, Chrome may
+          still be waiting for &ldquo;engagement&rdquo; — try opening a few
+          recipes and revisit this dialog.
+        </li>
+      </ol>
+
+      {/*
+        Android Web Share Target works once installed — BUT the install
+        binds the manifest to whatever URL was being served when the
+        user installed. If the user installed from a dev server (e.g.
+        http://localhost:3000 or a stale ngrok URL), the share intent
+        opens THAT URL, not the production one — which is the
+        "shared to Potluck and it tried to open localhost" failure
+        mode. Once an install is wrong, no client-side trick can fix
+        it; the only path is uninstall + reinstall.
+      */}
+      <div className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">
+          Sharing recipes to Potluck on Android
+        </p>
+        <p className="mt-1">
+          Once installed, &ldquo;Share to Potluck&rdquo; will appear in any
+          app&apos;s share sheet. If sharing opens a broken page (e.g. a
+          localhost URL), uninstall the old shortcut from your home screen
+          and install again from{" "}
+          <span className="font-mono">{getInstallHost()}</span> — the
+          install gets pinned to the URL you used at install time.
+        </p>
+      </div>
+    </>
   );
+}
+
+/**
+ * Best-effort host name for the "install from this URL" hint in the
+ * Android sharing diagnostic. Falls back to a placeholder during SSR.
+ */
+function getInstallHost(): string {
+  if (typeof window === "undefined") return "this page";
+  return window.location.host;
 }
 
 function DesktopInstructions() {

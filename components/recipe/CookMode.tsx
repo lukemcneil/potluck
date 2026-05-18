@@ -84,12 +84,38 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
     [ingredients, factor],
   );
 
-  // Screen wake lock — best-effort. Re-acquired when the tab becomes
-  // visible again because browsers release the lock on visibilitychange.
+  // Screen wake lock — best-effort.
+  //
+  // Two non-obvious things about the Screen Wake Lock API that this
+  // effect has to handle correctly:
+  //
+  //   1. The system AUTO-RELEASES the lock whenever the page goes
+  //      hidden (tab switch, screen-off, foreground app change,
+  //      iOS low-power mode kicking in, etc). The sentinel's
+  //      `released` flag flips to true; the sentinel object itself
+  //      stays around but is no longer doing anything.
+  //
+  //   2. To detect the auto-release you have to listen for the
+  //      sentinel's `release` event. Previously this code only
+  //      checked `wakeLockRef.current == null` on visibilitychange,
+  //      which meant: first auto-release left a stale (released)
+  //      sentinel in the ref, the next visibility-back check skipped
+  //      the re-acquire, and the screen could time out for the rest
+  //      of the cook session. This is the actual cook-mode bug.
+  //
+  // The fix: attach a `release` listener that clears the ref so the
+  // visibilitychange handler can re-acquire. We ALSO double-check
+  // `.released` on re-acquire as belt-and-suspenders for engines
+  // that fail to fire the event (Safari has historically been
+  // inconsistent here).
   useEffect(() => {
     let cancelled = false;
 
     async function acquire() {
+      if (cancelled) return;
+      const existing = wakeLockRef.current;
+      if (existing && !existing.released) return;
+
       const nav = navigator as Navigator & {
         wakeLock?: { request(type: "screen"): Promise<WakeLockSentinel> };
       };
@@ -97,19 +123,34 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
       try {
         const lock = await nav.wakeLock.request("screen");
         if (cancelled) {
-          await lock.release();
+          await lock.release().catch(() => {});
           return;
         }
         wakeLockRef.current = lock;
+        lock.addEventListener("release", () => {
+          // Clear the ref so the next visibilitychange (or any
+          // future acquire() call) actually re-requests instead of
+          // returning early. Only clear if it's still OUR lock —
+          // a later acquire might have already replaced it.
+          if (wakeLockRef.current === lock) {
+            wakeLockRef.current = null;
+          }
+        });
       } catch {
-        // Silently ignore — wake lock is a nice-to-have.
+        // Silently ignore — wake lock is a best-effort comfort,
+        // not load-bearing. Common rejections: user is in iOS
+        // low-power mode, or the document hasn't been interacted
+        // with yet (cook mode is entered via tap so this is rare).
       }
     }
 
     void acquire();
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible" && !wakeLockRef.current) {
+      if (document.visibilityState === "visible") {
+        // Always try to re-acquire on visibility-back. acquire()
+        // internally short-circuits when we already hold a live
+        // lock, so this is cheap when nothing changed.
         void acquire();
       }
     };

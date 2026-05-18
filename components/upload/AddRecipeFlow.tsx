@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Camera, ImagePlus, Link as LinkIcon, Pencil, ArrowLeft, Sparkles, Loader2, AlertTriangle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Camera,
+  ImagePlus,
+  Link as LinkIcon,
+  Pencil,
+  ArrowLeft,
+  Sparkles,
+  Loader2,
+  AlertTriangle,
+  Clipboard,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -426,49 +436,13 @@ export function AddRecipeFlow({
 
   if (stage.kind === "url") {
     return (
-      <div>
-        <BackButton onClick={() => setStage({ kind: "choose" })} />
-        <h1 className="font-display text-2xl font-semibold tracking-tight">
-          Paste a recipe URL
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          We&apos;ll fetch the page and let you review the parsed recipe.
-        </p>
-
-        <form
-          className="mt-4 flex flex-col gap-2 sm:flex-row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const url = urlInput.trim();
-            if (!url) return;
-            startExtractionFromUrl(url);
-          }}
-        >
-          <Label htmlFor="recipe-url" className="sr-only">
-            Recipe URL
-          </Label>
-          <Input
-            id="recipe-url"
-            type="url"
-            placeholder="https://www.bonappetit.com/recipe/..."
-            value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
-            inputMode="url"
-            autoFocus
-            className="flex-1 text-base"
-          />
-          <Button type="submit" size="lg" className="gap-2">
-            <Sparkles className="size-4" />
-            Extract
-          </Button>
-        </form>
-
-        {extractError && (
-          <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {extractError}
-          </p>
-        )}
-      </div>
+      <UrlStage
+        urlInput={urlInput}
+        setUrlInput={setUrlInput}
+        onSubmit={(u) => startExtractionFromUrl(u)}
+        onBack={() => setStage({ kind: "choose" })}
+        extractError={extractError}
+      />
     );
   }
 
@@ -587,6 +561,160 @@ function Tile({
         </div>
       </button>
     </li>
+  );
+}
+
+/**
+ * URL stage of the add-recipe flow.
+ *
+ * Lifted into its own component so we can hang the Web Share Target
+ * remediation logic — a one-tap "Paste link" button that reads the
+ * clipboard — off of it without bloating the parent. Why this exists:
+ *
+ *   - Android: Web Share Target works once installed, BUT only if the
+ *     PWA was installed from the production domain. Stale dev-mode
+ *     installs route the share intent to localhost (the URL the
+ *     manifest was bound to at install time). The fix for that is to
+ *     uninstall + reinstall from the prod URL — but until then, paste
+ *     is the next-best workaround.
+ *   - iOS Safari: Web Share Target API is NOT IMPLEMENTED and won't
+ *     be soon. Sharing TO a PWA on iOS happens via "Copy" in the
+ *     share sheet → open the PWA → paste. There's no way around
+ *     this until Apple adds the API.
+ *
+ * So the universal cross-platform sharing path is: copy the URL on
+ * the source page, open Potluck, tap "Paste link". One affordance,
+ * works everywhere.
+ *
+ * We DO NOT auto-read the clipboard on mount: iOS Safari shows a
+ * "Paste from clipboard?" permission popup the first time it's
+ * called, and surprising the user with that on every visit to /add
+ * is hostile. The explicit button (a user gesture) keeps the popup
+ * scoped to "I asked for this".
+ */
+function UrlStage({
+  urlInput,
+  setUrlInput,
+  onSubmit,
+  onBack,
+  extractError,
+}: {
+  urlInput: string;
+  setUrlInput: (next: string) => void;
+  onSubmit: (url: string) => void;
+  onBack: () => void;
+  extractError: string | null;
+}) {
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const tryPaste = async () => {
+    setPasteError(null);
+    // Clipboard API is HTTPS-only and gated behind a user gesture
+    // on most browsers; this whole handler runs in a click, which
+    // satisfies that. If it isn't available at all (older Safari,
+    // file: URLs, etc) we fall back to focusing the input and
+    // letting the OS native paste UI handle it.
+    const cb = navigator.clipboard;
+    if (!cb || typeof cb.readText !== "function") {
+      inputRef.current?.focus();
+      setPasteError(
+        "Your browser blocks reading the clipboard here. Long-press the field and tap Paste.",
+      );
+      return;
+    }
+    try {
+      const text = (await cb.readText()).trim();
+      if (!text) {
+        setPasteError("Your clipboard is empty.");
+        return;
+      }
+      // Be lenient: accept any string that contains an http(s) URL,
+      // not just strings that are JUST a URL. Some apps copy "Check
+      // out this recipe: https://... — yum!"; we just pull the
+      // first URL out.
+      const match = text.match(/https?:\/\/[^\s<>"]+/i);
+      const url = match ? match[0] : text;
+      if (!/^https?:\/\//i.test(url)) {
+        setPasteError(
+          "That doesn't look like a recipe URL — paste a link starting with http or https.",
+        );
+        return;
+      }
+      setUrlInput(url);
+      onSubmit(url);
+    } catch {
+      // Permission denied or some other failure. iOS Safari's
+      // permission popup throws when dismissed; that's fine.
+      inputRef.current?.focus();
+      setPasteError(
+        "Couldn't read your clipboard. Long-press the field and tap Paste, or paste manually.",
+      );
+    }
+  };
+
+  return (
+    <div>
+      <BackButton onClick={onBack} />
+      <h1 className="font-display text-2xl font-semibold tracking-tight">
+        Paste a recipe URL
+      </h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        We&apos;ll fetch the page and let you review the parsed recipe.
+      </p>
+
+      <form
+        className="mt-4 flex flex-col gap-2 sm:flex-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const url = urlInput.trim();
+          if (!url) return;
+          onSubmit(url);
+        }}
+      >
+        <Label htmlFor="recipe-url" className="sr-only">
+          Recipe URL
+        </Label>
+        <Input
+          ref={inputRef}
+          id="recipe-url"
+          type="url"
+          placeholder="https://www.bonappetit.com/recipe/..."
+          value={urlInput}
+          onChange={(e) => setUrlInput(e.target.value)}
+          inputMode="url"
+          autoFocus
+          className="flex-1 text-base"
+        />
+        <Button type="submit" size="lg" className="gap-2">
+          <Sparkles className="size-4" />
+          Extract
+        </Button>
+      </form>
+
+      <Button
+        type="button"
+        variant="outline"
+        onClick={tryPaste}
+        size="lg"
+        className="mt-2 w-full gap-2 sm:w-auto"
+      >
+        <Clipboard className="size-4" />
+        Paste link from clipboard
+      </Button>
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        On iPhone, copy a recipe link from Safari and tap{" "}
+        <span className="font-medium">Paste link from clipboard</span>{" "}
+        to import it.
+      </p>
+
+      {(extractError || pasteError) && (
+        <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {extractError ?? pasteError}
+        </p>
+      )}
+    </div>
   );
 }
 
