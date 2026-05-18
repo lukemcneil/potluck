@@ -299,6 +299,8 @@ EOF
 
 Replace `<TUNNEL-UUID>` with the UUID from `cloudflared tunnel create`. The credentials file was written there automatically.
 
+**Note on `X-Forwarded-Host`** — cloudflared sets `X-Forwarded-Host` and `X-Forwarded-Proto` on every request by default, which is what `lib/server/canonical-url.ts` reads to build redirect URLs (the Web Share Target endpoint relies on this so shared content doesn't get pointed at the server's internal `localhost:PORT`). You don't need to configure this explicitly; it's the default cloudflared behavior. **But** if you're swapping cloudflared for nginx/Caddy/Traefik, make sure your config does set those two headers, or set `AUTH_URL=https://potluck.example.com` in `.env.local` as a fallback — `canonical-url.ts` uses `AUTH_URL` as the next-best signal when the headers are absent.
+
 ### 6.5 Install as a service
 
 ```bash

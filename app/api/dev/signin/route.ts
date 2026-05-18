@@ -1,11 +1,12 @@
 import "server-only";
 
 import crypto from "node:crypto";
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { collections, sessions, users } from "@/db/schema";
+import { canonicalUrl } from "@/lib/server/canonical-url";
 
 /**
  * Dev-only fake-signin endpoint.
@@ -26,7 +27,7 @@ export const dynamic = "force-dynamic";
 const SESSION_COOKIE = "authjs.session-token";
 const SECURE_SESSION_COOKIE = "__Secure-authjs.session-token";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   if (process.env.NODE_ENV === "production") {
     return new NextResponse("Not Found", { status: 404 });
   }
@@ -111,7 +112,10 @@ export async function GET(req: Request) {
   // local dev — and is what Auth.js will read on the next request.
   const useSecureCookies = configuredAuthUrl()?.protocol === "https:";
   const cookieName = useSecureCookies ? SECURE_SESSION_COOKIE : SESSION_COOKIE;
-  const res = NextResponse.redirect(new URL(next, url.origin));
+  // Use the canonical (proxy-aware) URL so the redirect after a
+  // dev sign-in lands on the same hostname the dev tunnel is
+  // serving from, instead of the internal bind localhost.
+  const res = NextResponse.redirect(canonicalUrl(req, next));
   res.cookies.set(cookieName, sessionToken, {
     httpOnly: true,
     sameSite: "lax",

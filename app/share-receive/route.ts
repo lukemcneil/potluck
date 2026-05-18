@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { storage } from "@/lib/storage";
 import { processUpload } from "@/lib/images";
+import { canonicalUrl } from "@/lib/server/canonical-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,16 +30,25 @@ export const dynamic = "force-dynamic";
  * carries non-trivial privacy + cleanup work for a rare edge case.
  */
 export async function POST(req: NextRequest): Promise<Response> {
+  // CRITICAL: every redirect below MUST be built via `canonicalUrl`,
+  // not `new URL(path, req.url)`. When the app is behind Cloudflare
+  // Tunnel / nginx / any reverse proxy, `req.url`'s authority is the
+  // INTERNAL bind address (e.g. `http://localhost:PORT`). Using it
+  // in a `Location` header points the client at that internal URL,
+  // and on a phone "localhost" means "the phone itself", which has
+  // nothing on that port — every share intent ends up on a broken
+  // localhost URL. This was the actual root cause of the "share to
+  // Potluck lands on localhost:8086" bug, NOT a stale PWA install.
   const session = await auth();
   if (!session?.user?.id) {
-    return NextResponse.redirect(new URL("/signin?next=/add", req.url), 303);
+    return NextResponse.redirect(canonicalUrl(req, "/signin?next=/add"), 303);
   }
 
   let form: FormData;
   try {
     form = await req.formData();
   } catch {
-    return NextResponse.redirect(new URL("/add", req.url), 303);
+    return NextResponse.redirect(canonicalUrl(req, "/add"), 303);
   }
 
   const url = String(form.get("url") ?? "").trim();
@@ -50,7 +60,7 @@ export async function POST(req: NextRequest): Promise<Response> {
   // to drop it into `text` instead, so probe both.
   const candidate = url || extractFirstUrl(text);
   if (candidate) {
-    const target = new URL("/add", req.url);
+    const target = canonicalUrl(req, "/add");
     target.searchParams.set("shared", "url");
     target.searchParams.set("url", candidate);
     if (title) target.searchParams.set("title", title);
@@ -84,7 +94,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     if (ids.length > 0) {
-      const target = new URL("/add", req.url);
+      const target = canonicalUrl(req, "/add");
       target.searchParams.set("shared", "photos");
       target.searchParams.set("ids", ids.join(","));
       if (title) target.searchParams.set("title", title);
@@ -94,7 +104,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   // 3. Text-only share — drop into /add as a hint and let the user
   // pick a path manually.
-  const target = new URL("/add", req.url);
+  const target = canonicalUrl(req, "/add");
   if (text || title) {
     target.searchParams.set("shared", "text");
     if (title) target.searchParams.set("title", title);
