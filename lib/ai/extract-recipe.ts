@@ -27,6 +27,7 @@ import {
   type Discrepancy,
 } from "@/lib/ai/discrepancies";
 import { repairLlmJson } from "@/lib/ai/repair-json";
+import { runWithFallback } from "@/lib/ai/model-fallback";
 
 export type ExtractOk = {
   kind: "ok";
@@ -75,61 +76,98 @@ export function aiProvider(): AiProvider {
 
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 const OPENAI_URL_MODEL_DEFAULT = process.env.OPENAI_URL_MODEL ?? "gpt-4o-mini";
-// `gemini-2.5-flash` is the current "fast + smart + free tier"
-// workhorse. `gemini-2.0-flash` is older and on some accounts has its
-// free-tier quota set to 0 — switching to 2.5 avoids that footgun.
-// Gemini 3.1 Flash-Lite (GA May 2026) is dramatically faster than
-// 2.5-flash for our use case — 6–8s on long blog URLs vs 25–55s, with
-// equally good extraction quality. The lite tier also gets a much
-// larger free-tier RPD than full 2.5-flash (which is currently
-// throttled to 20 RPD on some accounts), so this is a substantial UX
-// + quota win. Override per-deployment with `GOOGLE_MODEL` /
-// `GOOGLE_URL_MODEL` if you want the slower but slightly stronger
-// `gemini-2.5-flash` or `gemini-2.5-pro`.
-const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-3.1-flash-lite";
-const GOOGLE_URL_MODEL =
-  process.env.GOOGLE_URL_MODEL ?? "gemini-3.1-flash-lite";
 
-// Model used for the SECOND (verification) pass. We deliberately pick a
-// smaller/cheaper model than the primary so:
-//   (a) it actually finishes within VERIFICATION_TIMEOUT_MS — the
-//       primary URL pass on Gemini Flash routinely takes 15–30s, which
-//       blew up our old 10s budget,
-//   (b) the verifier reads the source independently of the primary's
-//       biases (different size / training mix = independent failure
-//       modes), which is the whole point of cross-checking.
-// OpenAI: gpt-4o-mini is the established cheap counterpart.
-// Google: gemini-3.1-flash-lite. We use the SAME model for primary
-// and audit because (a) flash-lite is fast enough that the audit
-// doesn't push us out of the user's latency budget even when both
-// passes run sequentially, (b) using the same model keeps free-tier
-// quota usage on a single bucket, (c) the lite tier's RPD is high
-// enough that we don't burn through it in a normal day.
+// Google model strategy (May 2026): default to `gemini-2.5-flash` for
+// both the primary extraction AND the audit pass, then automatically
+// fall back to `gemini-3.1-flash-lite` once we hit the free-tier 429.
+//
+// Why 2.5-flash first: noticeably more accurate on both quantities
+// and step wording than 3.1-flash-lite, and far less likely to
+// hallucinate audit issues. That makes the import-then-review UX
+// substantially less noisy — fewer false-positive "verify this
+// quantity" prompts in the review strip.
+//
+// Why a fallback at all: the 2.5-flash free tier is throttled to ~20
+// RPD on many accounts (Google has been quietly tightening this).
+// That's two extractions a day for a household — well under what
+// "the family is cooking tonight" demands. 3.1-flash-lite lives on a
+// SEPARATE quota bucket with a much higher daily ceiling, so when
+// 2.5-flash's bucket empties we just keep working on the lite tier
+// for the rest of the day. The fallback is automatic and transparent
+// (logged in journalctl, costed against whichever model actually
+// served the result).
+//
+// Override either default with `GOOGLE_MODEL` / `GOOGLE_URL_MODEL` /
+// `GOOGLE_VERIFY_MODEL`. Override the fallback with
+// `GOOGLE_FALLBACK_MODEL` (used for image+URL primary fallback) and
+// `GOOGLE_VERIFY_FALLBACK_MODEL` (audit fallback). Set the fallback
+// vars to the same value as the primary to disable the fallback.
+const GOOGLE_IMAGE_MODEL = process.env.GOOGLE_MODEL ?? "gemini-2.5-flash";
+const GOOGLE_URL_MODEL = process.env.GOOGLE_URL_MODEL ?? "gemini-2.5-flash";
+const GOOGLE_FALLBACK_MODEL =
+  process.env.GOOGLE_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
+
+// Audit pass: same defaults as the primary so the cross-check is run
+// at full strength. The free-tier 429 fallback applies here too —
+// see GOOGLE_VERIFY_FALLBACK_MODEL. The audit's 30 s hard timeout
+// (VERIFICATION_TIMEOUT_MS below) protects the user-facing latency
+// budget when the fallback model is slower than expected.
 const OPENAI_VERIFY_MODEL =
   process.env.OPENAI_VERIFY_MODEL ?? "gpt-4o-mini";
 const GOOGLE_VERIFY_MODEL =
-  process.env.GOOGLE_VERIFY_MODEL ?? "gemini-3.1-flash-lite";
+  process.env.GOOGLE_VERIFY_MODEL ?? "gemini-2.5-flash";
+const GOOGLE_VERIFY_FALLBACK_MODEL =
+  process.env.GOOGLE_VERIFY_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
 
 /**
  * Cheaper text-only model used for the soft-cap downgrade in
  * /api/extract (image extraction routes to this when the user is
- * over ~⅔ of their monthly USD cap).
+ * over ~⅔ of their monthly USD cap). Only meaningful on OpenAI —
+ * the Google path is free-tier and has no per-user budget cap.
  */
 export const URL_MODEL =
   aiProvider() === "openai" ? OPENAI_URL_MODEL_DEFAULT : GOOGLE_URL_MODEL;
 
-function verifyModelFor(provider: AiProvider): string {
-  return provider === "openai" ? OPENAI_VERIFY_MODEL : GOOGLE_VERIFY_MODEL;
-}
-
-function defaultModelFor(
+/**
+ * Resolve the ordered list of models to try for a given extraction.
+ * The first entry is the primary; subsequent entries are fallbacks
+ * we try in order on 429 / quota-exhausted failures (see
+ * `lib/ai/model-fallback.ts`). Non-rate-limit errors propagate
+ * immediately — falling back to a less capable model on schema
+ * failures doesn't help.
+ */
+function defaultModelChainFor(
   provider: AiProvider,
   kind: ExtractInput["kind"],
-): string {
+): string[] {
   if (provider === "openai") {
-    return kind === "url" ? OPENAI_URL_MODEL_DEFAULT : OPENAI_IMAGE_MODEL;
+    return kind === "url" ? [OPENAI_URL_MODEL_DEFAULT] : [OPENAI_IMAGE_MODEL];
   }
-  return kind === "url" ? GOOGLE_URL_MODEL : GOOGLE_IMAGE_MODEL;
+  const primary = kind === "url" ? GOOGLE_URL_MODEL : GOOGLE_IMAGE_MODEL;
+  return uniqueChain([primary, GOOGLE_FALLBACK_MODEL]);
+}
+
+function verifyModelChainFor(provider: AiProvider): string[] {
+  if (provider === "openai") {
+    return [OPENAI_VERIFY_MODEL];
+  }
+  return uniqueChain([GOOGLE_VERIFY_MODEL, GOOGLE_VERIFY_FALLBACK_MODEL]);
+}
+
+/**
+ * Drop duplicates and empty entries from a model chain. If a user
+ * sets the fallback env var to the same id as the primary (their
+ * preferred "disable fallback" knob), we collapse to a single-entry
+ * chain so we don't double-call the same exhausted quota bucket.
+ */
+function uniqueChain(ids: Array<string | undefined>): string[] {
+  const out: string[] = [];
+  for (const id of ids) {
+    const trimmed = id?.trim();
+    if (!trimmed) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
 }
 
 function modelHandle(provider: AiProvider, modelId: string) {
@@ -335,8 +373,13 @@ export async function extractRecipe(
   ensureApiKey(provider);
 
   const userParts = await buildExtractUserContent(input);
-  const model = options.modelOverride ?? defaultModelFor(provider, input.kind);
-  return runExtraction(userParts, model, input);
+  // An explicit modelOverride bypasses the fallback chain — callers
+  // who pass one (e.g. the soft-cap downgrade in /api/extract) are
+  // making a deliberate choice that we shouldn't second-guess.
+  const modelChain = options.modelOverride
+    ? [options.modelOverride]
+    : defaultModelChainFor(provider, input.kind);
+  return runExtraction(userParts, modelChain, input);
 }
 
 /**
@@ -380,11 +423,12 @@ export async function extractAndVerifyRecipe(
   // Build the user content ONCE so we don't double-fetch the URL or
   // re-base64 the same image bytes twice.
   const userParts = await buildExtractUserContent(input);
-  const primaryModel =
-    options.modelOverride ?? defaultModelFor(provider, input.kind);
-  const verifyModel = verifyModelFor(provider);
+  const primaryChain = options.modelOverride
+    ? [options.modelOverride]
+    : defaultModelChainFor(provider, input.kind);
+  const verifyChain = verifyModelChainFor(provider);
 
-  const primary = await runExtraction(userParts, primaryModel, input);
+  const primary = await runExtraction(userParts, primaryChain, input);
 
   // Audit only makes sense when the primary actually returned a
   // recipe. If primary bailed (no-recipe), there's nothing to audit;
@@ -404,17 +448,21 @@ export async function extractAndVerifyRecipe(
   // soft-fail to `verificationFailed: true` with an empty discrepancy
   // list — the primary still ships.
   const auditPromise = withTimeout(
-    runAuditPass(userParts, verifyModel, primary.recipe, input).catch(
+    runAuditPass(userParts, verifyChain, primary.recipe, input).catch(
       (err): AuditResult & { __failed: true } => {
         // Surface the upstream error in server logs so we can debug
         // schema-validation / rate-limit / quota failures without
-        // the user seeing anything but the soft-fail banner.
+        // the user seeing anything but the soft-fail banner. If we
+        // got here from the fallback path the model id in the error
+        // chain reflects whichever model gave up last.
         console.warn(
           `[ai.audit] failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         return {
           issues: { looksCorrect: true, ingredientIssues: [], stepIssues: [] },
-          cost: zeroCost(verifyModel),
+          // Attribute the zero-cost no-op to the chain's primary so
+          // logs and per-model usage rollups stay sensible.
+          cost: zeroCost(verifyChain[0]),
           __failed: true,
         };
       },
@@ -463,7 +511,7 @@ type AuditResult = {
 
 async function runAuditPass(
   primaryUserParts: UserContent,
-  model: string,
+  modelChain: readonly string[],
   primaryRecipe: ExtractedRecipe,
   input: ExtractInput,
 ): Promise<AuditResult> {
@@ -471,16 +519,21 @@ async function runAuditPass(
   const auditParts = buildAuditUserContent(primaryUserParts, primaryRecipe);
 
   const startedAt = Date.now();
-  const { object, usage } = await generateObjectResilient({
-    model: modelHandle(provider, model),
-    schema: extractionIssuesWireSchema,
-    system: AUDIT_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: auditParts }],
-    label: "audit",
-  });
+  const {
+    result: { object, usage },
+    usedModel,
+  } = await runWithFallback(modelChain, "audit", (modelId) =>
+    generateObjectResilient({
+      model: modelHandle(provider, modelId),
+      schema: extractionIssuesWireSchema,
+      system: AUDIT_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: auditParts }],
+      label: "audit",
+    }),
+  );
   const elapsedMs = Date.now() - startedAt;
 
-  const cost = computeCost(model, {
+  const cost = computeCost(usedModel, {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
     cachedInputTokens: usage.cachedInputTokens,
@@ -489,7 +542,7 @@ async function runAuditPass(
   const totalIssues =
     object.ingredientIssues.length + object.stepIssues.length;
   console.log(
-    `[ai.audit] provider=${provider} model=${model} kind=${input.kind} ` +
+    `[ai.audit] provider=${provider} model=${usedModel} kind=${input.kind} ` +
       `looksCorrect=${object.looksCorrect} issues=${totalIssues} ` +
       `tokens=${cost.inputTokens}+${cost.outputTokens}=${cost.inputTokens + cost.outputTokens} ` +
       `cost=${formatUsd(cost.totalCost)} ` +
@@ -636,13 +689,16 @@ function sumCost(
 }
 
 /**
- * Single LLM call against an already-built user content payload. Pulled
- * out of `extractRecipe` so {@link extractAndVerifyRecipe} can run two
- * calls (primary + verification) over the same prepared payload.
+ * Single LLM extraction over an already-built user content payload.
+ * Pulled out of `extractRecipe` so {@link extractAndVerifyRecipe} can
+ * run two calls (primary + verification) over the same prepared
+ * payload. Accepts a CHAIN of models — the first is the primary, the
+ * rest are fallbacks tried in order on 429 / quota errors. Cost and
+ * logs are attributed to whichever model actually served the result.
  */
 async function runExtraction(
   userParts: UserContent,
-  model: string,
+  modelChain: readonly string[],
   input: ExtractInput,
 ): Promise<ExtractResult> {
   const imageCount =
@@ -654,16 +710,21 @@ async function runExtraction(
 
   const provider = aiProvider();
   const startedAt = Date.now();
-  const { object, usage } = await generateObjectResilient({
-    model: modelHandle(provider, model),
-    schema: extractedRecipeWireSchema,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: userParts }],
-    label: "extract",
-  });
+  const {
+    result: { object, usage },
+    usedModel,
+  } = await runWithFallback(modelChain, "extract", (modelId) =>
+    generateObjectResilient({
+      model: modelHandle(provider, modelId),
+      schema: extractedRecipeWireSchema,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userParts }],
+      label: "extract",
+    }),
+  );
   const elapsedMs = Date.now() - startedAt;
 
-  const cost = computeCost(model, {
+  const cost = computeCost(usedModel, {
     inputTokens: usage.inputTokens ?? 0,
     outputTokens: usage.outputTokens ?? 0,
     cachedInputTokens: usage.cachedInputTokens,
@@ -677,7 +738,7 @@ async function runExtraction(
   const outcome = isNoRecipe ? "no-recipe" : "ok";
 
   console.log(
-    `[ai.extract] provider=${provider} model=${model} kind=${input.kind} images=${imageCount} ` +
+    `[ai.extract] provider=${provider} model=${usedModel} kind=${input.kind} images=${imageCount} ` +
       `outcome=${outcome} ` +
       `tokens=${cost.inputTokens}+${cost.outputTokens}=${cost.inputTokens + cost.outputTokens} ` +
       `cached=${cost.cachedInputTokens} cost=${formatUsd(cost.totalCost)} ` +

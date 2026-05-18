@@ -526,12 +526,35 @@ into someone's pan without a human taking a look at it first.
   second LLM call (the "audit pass") whose job is to read both and
   emit a typed list of mistakes — wrong quantity, wrong unit, missed
   ingredient, hallucinated row, garbled step. On Google the default
-  is `gemini-3.1-flash-lite` for BOTH primary and audit (chosen for
-  speed: ~6–8s primary on long URLs vs 25–55s for 2.5-flash, and to
-  keep free-tier RPD on a single high-volume bucket). On OpenAI we
-  default to `gpt-4o` primary and `gpt-4o-mini` audit. Both pairs are
-  env-overridable via `GOOGLE_MODEL` / `GOOGLE_URL_MODEL` /
-  `GOOGLE_VERIFY_MODEL` (and `OPENAI_*` equivalents).
+  is `gemini-2.5-flash` for BOTH primary and audit — it's noticeably
+  more accurate on quantities/units and far less likely to hallucinate
+  audit issues than the 3.1-flash-lite tier, so the import-then-review
+  UX is much less noisy (fewer false-positive "verify this quantity"
+  prompts). On OpenAI we default to `gpt-4o` primary and `gpt-4o-mini`
+  audit. Both pairs are env-overridable via `GOOGLE_MODEL` /
+  `GOOGLE_URL_MODEL` / `GOOGLE_VERIFY_MODEL` (and `OPENAI_*`
+  equivalents).
+- **Model fallback chain on Google free tier**
+  (`lib/ai/model-fallback.ts`, `lib/ai/extract-recipe.ts#defaultModelChainFor`):
+  `gemini-2.5-flash` is throttled to ~20 RPD on most free-tier
+  accounts. Two recipes a day would push a family deployment past
+  that limit, which would otherwise hard-fail extractions. Instead,
+  every Google extraction tries a chain — `[gemini-2.5-flash,
+  gemini-3.1-flash-lite]` for the primary and the same for the audit
+  pass — and falls back to the next model on a 429. `flash-lite`
+  lives on a SEPARATE quota bucket with a much higher RPD ceiling,
+  so once 2.5-flash's bucket empties we just keep extracting on the
+  lite tier for the rest of the day. The fallback is transparent
+  (logged as `[ai.extract] gemini-2.5-flash hit 429 …; falling back
+  to gemini-3.1-flash-lite`) and cost is attributed to whichever
+  model actually served the result. Non-rate-limit errors (schema
+  failures, model unavailable, network blips) re-throw immediately
+  — falling further down the chain to a less-capable model doesn't
+  help with those. The fallback model is env-overridable per role
+  (`GOOGLE_FALLBACK_MODEL`, `GOOGLE_VERIFY_FALLBACK_MODEL`); setting
+  it to the same value as the primary disables the fallback. OpenAI
+  paths use a single-model chain because OpenAI's per-tier rate
+  limits are generous enough that the fallback would be a no-op.
   We tried parallel-and-diff first and switched to sequential audit
   because (a) the auditor reading "primary said X, source says Y"
   produces clearer review-strip wording than two independent
