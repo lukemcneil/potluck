@@ -205,6 +205,27 @@
   context — anything that isn't an ingredient count or a step.
   Plain-text only; `whitespace-pre-line` preserves the author's line
   breaks.
+- [x] **Auto-import hero images from URL pages**:
+  `lib/recipe-import/images.ts` scrapes `og:image` /
+  `og:image:secure_url` / `twitter:image` meta tags AND JSON-LD
+  `Recipe.image` (string / array / `ImageObject` / `@graph`-wrapped
+  WP form) from the source HTML, then fetches each candidate
+  through the same SSRF / size / content-type guard fence and the
+  same sharp normalization pipeline `/api/upload` uses. Runs in
+  parallel with the LLM call via `Promise.all` in `/api/extract`
+  for `kind=url`, so latency stays bounded by the AI pass.
+  Returned photos are stamped `role: "cover"` (page beauty shots
+  ARE the visual identity, in contrast to the photo-extraction
+  flow which stamps them as `source`) and handed to
+  `RecipeForm` as `initialPhotos`. Sub-600 px thumbnails are
+  filtered post-normalize so WP-style `-225x225` / `-500x500`
+  variants don't crowd out the hero. 19 unit tests on the pure
+  parser cover meta-attribute order, regex-anchor regression
+  (`og:image:width` mustn't match), JSON-LD shape variations,
+  relative-URL resolution, dedupe, MAX_IMAGES cap. Real-world
+  smoke against Sugar Spun Run + Sally's Baking Addiction yields
+  the 1200×1200 / 1200×1800 hero only — clean import,
+  ~8 s end-to-end.
 - [x] **Cover vs source photo roles**: `recipePhotos.role` column
   (`"cover" | "source"`, default `cover`). Cover photos are the
   recipe's visual identity (carousel, feed cards, collection covers,

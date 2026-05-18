@@ -301,6 +301,62 @@ Notes:
 
 - `components/recipe/PhotoCarousel.tsx` is a CSS scroll-snap horizontal scroller with hidden scrollbar, dot indicators, desktop arrow buttons, and an `IntersectionObserver` to track the active slide. Single-photo input falls back to a plain `<Image>`. The first slide gets `priority` so LCP isn't regressed.
 
+## URL imports: auto-imported page images
+
+The "Paste a URL" flow doesn't just extract recipe text — it also
+scrapes the source page for hero images and stamps them onto the
+new recipe so the user doesn't have to find their own photo.
+
+- `lib/recipe-import/images.ts` owns the whole pipeline. Two
+  exports:
+  - `findPageImageUrls(html, baseUrl)` — pure parser. Pulls URLs
+    out of `og:image` / `og:image:secure_url` / `og:image:url` /
+    `twitter:image` meta tags AND JSON-LD `Recipe.image` (string,
+    array, `ImageObject` with `url`/`contentUrl`, and the
+    `@graph`-bundled WordPress / Yoast / RankMath form). Resolves
+    relative URLs against `baseUrl`, dedupes, caps at 3. Unit
+    tests at `lib/recipe-import/__tests__/images.test.ts` cover
+    all 19 shapes including the regression where
+    `og:image:width` matches as a substring of `og:image` if the
+    property regex isn't anchored.
+  - `importPageImages(url)` — best-effort orchestrator. Fetches
+    the page (reusing `fetchRecipePage` so it gets the same
+    SSRF / timeout / size guards), runs `findPageImageUrls`,
+    then for each candidate: re-SSRF-checks the image URL,
+    fetches with an 8 s timeout and 8 MB cap, validates
+    content-type (jpeg/png/webp/avif only), runs through the
+    same `processUpload` sharp pipeline `/api/upload` uses, and
+    persists via `storage.put`. NEVER throws — every failure
+    path returns null for that image, and the whole function
+    returns an empty array if nothing useable was found.
+- Tiny thumbnails are filtered out post-processing
+  (`MIN_HERO_DIM = 600`). Real recipe-blog hero shots are always
+  ≥800 px on their smaller axis; WP-generated 225×225 / 500×500
+  / 260×195 thumbnails the JSON-LD also lists are skipped before
+  they hit disk. This is what keeps a single import from
+  flooding the picker with 3 near-identical photos of the same
+  dish.
+- Wired into `/api/extract` via `Promise.all` next to
+  `extractAndVerifyRecipe` for `kind=url` requests, so image
+  import runs entirely in parallel with the LLM call. The page
+  gets fetched twice (once by each module), which is wasteful in
+  bytes but trivial in latency because the source CDN caches.
+  Refactoring to share the HTML would couple two cleanly-
+  separated modules and isn't worth it. Smoke tests against
+  Sugar Spun Run and Sally's Baking Addiction show end-to-end
+  latency stays at ~8 s (i.e. the LLM call is still the bottleneck).
+- Response shape adds `photos: ImportedImage[]` (only on the
+  200-success path; on 422 no-recipe the user is bounced back to
+  the URL stage and stray imported photos would be confusing).
+  Disk cost of those orphan files is acceptable (≤3 normalized
+  images per attempt; future cleanup pass TBD).
+- Client side, `AddRecipeFlow.startExtractionFromUrl` stamps
+  each returned photo with `role: "cover"` (page beauty shots
+  ARE the visual identity, in contrast to the photos-extraction
+  path which stamps them as `source`) and hands them to
+  `RecipeForm` as `initialPhotos`. The Cover/Source toggle in
+  `PhotoPicker` still lets the user demote any of them.
+
 ## Cover vs source photos
 
 Recipes have two flavors of photo:

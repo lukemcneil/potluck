@@ -158,7 +158,13 @@ function parseCharset(contentType: string): string | null {
   return m ? m[1].trim().toLowerCase() : null;
 }
 
-function isLocalOrPrivateHost(host: string): boolean {
+/**
+ * Cheap SSRF guard shared with the image importer: refuses
+ * `localhost`, IPv6 loopback, and the common IPv4 private ranges.
+ * Exposed so any path that fetches a user-supplied URL on the
+ * server can use the same definition.
+ */
+export function isLocalOrPrivateHost(host: string): boolean {
   const h = host.toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost")) return true;
   if (h === "127.0.0.1" || h === "::1" || h === "0.0.0.0") return true;

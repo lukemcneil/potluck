@@ -51,6 +51,14 @@ type ExtractApiResponse = {
   verificationFailed?: boolean;
   cost?: ExtractionCost;
   spend?: ExtractionSpend;
+  /**
+   * URL imports only — server-side scraped + normalized + persisted
+   * photos pulled from og:image / JSON-LD Recipe.image on the source
+   * page. Already shaped as `UploadedPhoto` so we can hand them
+   * straight to RecipeForm as `initialPhotos`. Defaults to empty array
+   * (no images found, or scrape failed silently).
+   */
+  photos?: UploadedPhoto[];
   error?: string;
   reason?: string;
 };
@@ -222,9 +230,20 @@ export function AddRecipeFlow({
         throw new Error(body?.error ?? `Extraction failed (${res.status})`);
       }
       const review = buildReviewPayload(body.recipe, body.discrepancies ?? []);
+      // Photos scraped from the source page (og:image / JSON-LD
+      // Recipe.image) are by definition the page's "beauty shot" of
+      // the dish — exactly what users want as the recipe's cover.
+      // Stamp them as `cover` so they show up in the carousel
+      // immediately, matching the default behavior of direct
+      // PhotoPicker uploads. The user can still demote any of them
+      // to `source` via the toggle.
+      const importedPhotos: UploadedPhoto[] = (body.photos ?? []).map((p) => ({
+        ...p,
+        role: "cover",
+      }));
       setStage({
         kind: "form",
-        photos: [],
+        photos: importedPhotos,
         prefill: prefillFromReview(body.recipe, review),
         sourceUrl: url,
         cost: body.cost ?? null,

@@ -5,6 +5,7 @@ import {
   extractAndVerifyRecipe,
   URL_MODEL,
 } from "@/lib/ai/extract-recipe";
+import { importPageImages } from "@/lib/recipe-import/images";
 import {
   monthlySpendForUser,
   recordAiUsage,
@@ -86,9 +87,24 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await extractAndVerifyRecipe(parsed.data, {
-      modelOverride,
-    });
+    // For URL imports we kick off image scraping in parallel with the
+    // AI extraction so the wall-clock cost stays bounded by the slower
+    // of the two (almost always the LLM). The page is fetched twice
+    // — once inside extractAndVerifyRecipe for the LLM input, once
+    // inside importPageImages for the OG/JSON-LD parsing — which is
+    // wasteful in bytes but trivial in latency (CDN cache), and
+    // refactoring to share the HTML would couple two clean modules.
+    // importPageImages NEVER throws, so we can use Promise.all without
+    // letting one path murder the other.
+    const importPromise =
+      parsed.data.kind === "url"
+        ? importPageImages(parsed.data.url)
+        : Promise.resolve([]);
+
+    const [result, importedPhotos] = await Promise.all([
+      extractAndVerifyRecipe(parsed.data, { modelOverride }),
+      importPromise,
+    ]);
 
     // Persist usage so we can bill / cap reliably. We do this even
     // when the model said "no recipe" — the call still burned tokens.
@@ -135,6 +151,11 @@ export async function POST(req: Request) {
       verificationFailed: result.verificationFailed,
       cost: costPayload,
       spend: spendPayload,
+      // Only forward photos on the success path. On 422 the user is
+      // bounced back to the URL input, where stray pre-imported
+      // photos would be confusing. The disk cost (≤3 normalized
+      // images per attempt) is acceptable orphan storage.
+      photos: importedPhotos,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Extraction failed";

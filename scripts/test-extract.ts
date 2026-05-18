@@ -37,6 +37,11 @@ import {
   extractRecipe,
   extractAndVerifyRecipe,
 } from "../lib/ai/extract-recipe";
+import {
+  findPageImageUrls,
+  importPageImages,
+} from "../lib/recipe-import/images";
+import { fetchRecipePage } from "../lib/recipe-import/fetch";
 
 async function main() {
   const provider = aiProvider();
@@ -217,11 +222,50 @@ async function runUrlMode(url: string, withVerify = false) {
   console.log(
     `→ Fetching HTML server-side and calling ${withVerify ? "extractAndVerifyRecipe()" : "extractRecipe()"}...\n`,
   );
+
+  // Page-image discovery: parse the HTML for og:image / JSON-LD
+  // Recipe.image hints WITHOUT actually downloading them. This is the
+  // cheap, fast piece of the importer — useful smoke check that's
+  // independent of the LLM call. We do this BEFORE timing the AI so
+  // its latency doesn't dirty the wall-clock number printed for the
+  // extraction.
+  try {
+    const page = await fetchRecipePage(url);
+    const hints = findPageImageUrls(page.html, page.finalUrl);
+    console.log(`---- PAGE IMAGES (hints) ----`);
+    if (hints.length === 0) {
+      console.log("(no og:image or Recipe.image found — importer will return empty)");
+    } else {
+      for (const h of hints) console.log(`  • ${h}`);
+    }
+    console.log();
+  } catch (err) {
+    console.log(
+      `(image hint scan failed: ${err instanceof Error ? err.message : "unknown"})\n`,
+    );
+  }
+
   const startedAt = Date.now();
-  const result = withVerify
-    ? await extractAndVerifyRecipe({ kind: "url", url })
-    : await extractRecipe({ kind: "url", url });
+  const [result, importedPhotos] = await Promise.all([
+    withVerify
+      ? extractAndVerifyRecipe({ kind: "url", url })
+      : extractRecipe({ kind: "url", url }),
+    // Run the real download/normalize/store path in parallel so we
+    // also measure the importer end-to-end. It's best-effort so we
+    // just log whatever comes back.
+    importPageImages(url).catch(() => []),
+  ]);
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+
+  if (importedPhotos.length > 0) {
+    console.log(`---- IMPORTED PHOTOS (${importedPhotos.length}) ----`);
+    for (const p of importedPhotos) {
+      console.log(`  • ${p.publicPath} (${p.width}×${p.height})`);
+    }
+    console.log();
+  } else {
+    console.log(`---- IMPORTED PHOTOS ----\n(none — see hints above for why)\n`);
+  }
 
   console.log(`✓ Got result in ${elapsed}s\n`);
   console.log("---- COST ----");
