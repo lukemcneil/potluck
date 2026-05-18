@@ -492,6 +492,29 @@ verification gate so a quietly-wrong AI reading (the canonical failure
 mode is `1 tsp salt` quietly becoming `1 tbsp salt`) can't make it
 into someone's pan without a human taking a look at it first.
 
+- **Resilient structured output** (`lib/ai/extract-recipe.ts#generateObjectResilient` + `lib/ai/repair-json.ts`):
+  the Vercel AI SDK's `generateObject` already constrains both
+  providers with a JSON schema (OpenAI's strict `response_format`,
+  Gemini's `responseSchema`), but ~5% of Gemini Flash-Lite responses
+  still arrive wrapped in ` ```json … ``` ` fences or with
+  "Here's the recipe:" preamble despite the schema. We wrap both
+  the primary and audit calls in a helper that adds two layers:
+  (1) the SDK's `experimental_repairText` hook runs `repairLlmJson`
+  on the bad text — strips a single code fence, then walks brace
+  depth (respecting string literals + escapes) to extract the first
+  balanced top-level `{…}` and verifies it parses as a JSON object;
+  (2) if repair still can't produce valid JSON the SDK throws
+  `NoObjectGeneratedError` / `JSONParseError` / `TypeValidationError`
+  and we catch those and start a fresh call with a tougher reminder
+  appended to the system prompt. Non-schema errors (429, network
+  blips, "model unavailable") re-throw immediately — retrying a
+  rate-limit hit just burns more budget. Max output is capped at
+  8192 tokens so the model can't silently truncate mid-JSON and
+  produce an unparseable fragment. The repair helper deliberately
+  doesn't try to fix JSON-structure-level bugs (no auto-removing
+  trailing commas, no closing unbalanced braces) because those
+  rewrites can silently turn "wrong-but-recoverable" into
+  "wrong-and-now-misleading".
 - **Per-field confidence**: `extractedRecipeSchema` carries
   `confidence: "high" | "low"` on every ingredient and step. The
   system prompt asks the model to mark anything it had to guess

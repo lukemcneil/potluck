@@ -1,8 +1,16 @@
 import "server-only";
 
-import { generateObject, type UserContent } from "ai";
+import {
+  generateObject,
+  JSONParseError,
+  NoObjectGeneratedError,
+  TypeValidationError,
+  type LanguageModel,
+  type UserContent,
+} from "ai";
 import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
+import type { z } from "zod";
 
 import {
   extractedRecipeSchema,
@@ -18,6 +26,7 @@ import {
   issuesToDiscrepancies,
   type Discrepancy,
 } from "@/lib/ai/discrepancies";
+import { repairLlmJson } from "@/lib/ai/repair-json";
 
 export type ExtractOk = {
   kind: "ok";
@@ -125,6 +134,130 @@ function defaultModelFor(
 
 function modelHandle(provider: AiProvider, modelId: string) {
   return provider === "openai" ? openai(modelId) : google(modelId);
+}
+
+/**
+ * Hard cap on how big a single structured response can grow. 8192 is
+ * comfortably above what any real recipe needs (the worst Simply
+ * Recipes / Sally's-Baking-Addiction outputs we've seen with notes
+ * capture turned on land around 5-6K tokens). Setting this explicitly
+ * does two things:
+ *   1. Stops the model from silently truncating mid-JSON and emitting
+ *      a fragment that won't parse — instead, the SDK signals "ran
+ *      out of room" and we retry.
+ *   2. Keeps cost bounded if a prompt accidentally invites the model
+ *      to ramble.
+ */
+const MAX_OUTPUT_TOKENS = 8192;
+
+/**
+ * Same model handle is used both for the primary extraction and for
+ * the inline JSON-repair retry inside generateObjectResilient, so we
+ * pass it through rather than re-resolving it from the env each time.
+ */
+type ResilientCallOptions<S extends z.ZodTypeAny> = {
+  model: LanguageModel;
+  schema: S;
+  system: string;
+  messages: Array<{ role: "user"; content: UserContent }>;
+  /**
+   * Total attempts including the first one. The first attempt does
+   * the SDK's built-in `experimental_repairText` self-heal; subsequent
+   * attempts start a brand-new call with a slightly tougher system
+   * prompt. Defaults to 2.
+   */
+  maxAttempts?: number;
+  /** Bytes/tokens cap. Defaults to MAX_OUTPUT_TOKENS. */
+  maxOutputTokens?: number;
+  /** For log lines. */
+  label: string;
+};
+
+const RETRY_REMINDER = `
+
+IMPORTANT: Your previous attempt did not return valid JSON matching the schema. Respond ONLY with the raw JSON object — no markdown code fences, no preamble, no trailing commentary. Every required field must be present.`;
+
+/**
+ * Wraps `generateObject` with two layers of protection against the
+ * "the LLM forgot to emit valid JSON" failure mode:
+ *
+ *   1. Inline repair (single call, no extra latency in the happy
+ *      path): the SDK's `experimental_repairText` hook runs our
+ *      `repairLlmJson` helper when the model's first response fails
+ *      JSON parsing or schema validation. That handles the most
+ *      common Gemini Flash-Lite hiccup — wrapping the response in
+ *      ```json ... ``` fences or adding "Here's your recipe:"
+ *      preamble despite a strict responseSchema.
+ *
+ *   2. Whole-call retry (one extra latency penalty when triggered):
+ *      if the repair pass STILL can't produce valid JSON, the SDK
+ *      throws `NoObjectGeneratedError` / `JSONParseError` /
+ *      `TypeValidationError`. We catch those and start a fresh call
+ *      with a tougher reminder in the system prompt. Other errors
+ *      (rate limits, network blips, model unavailable) re-throw so
+ *      the caller can handle them appropriately — there's no point
+ *      retrying a 429.
+ *
+ * Returns the same shape `generateObject` does. Throws if all
+ * attempts are exhausted.
+ */
+async function generateObjectResilient<S extends z.ZodTypeAny>(
+  opts: ResilientCallOptions<S>,
+): Promise<{
+  object: z.infer<S>;
+  usage: Awaited<ReturnType<typeof generateObject>>["usage"];
+}> {
+  const maxAttempts = opts.maxAttempts ?? 2;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const system =
+      attempt === 1 ? opts.system : `${opts.system}${RETRY_REMINDER}`;
+
+    try {
+      const result = await generateObject({
+        model: opts.model,
+        schema: opts.schema,
+        system,
+        messages: opts.messages,
+        maxOutputTokens: opts.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
+        // Run on every parse/validation failure before throwing. We
+        // only attempt safe textual repairs (fences / preamble);
+        // returning null gives up and lets the SDK throw, which our
+        // outer loop then handles via a fresh call.
+        experimental_repairText: async ({ text }) => repairLlmJson(text),
+      });
+      if (attempt > 1) {
+        console.log(
+          `[ai.${opts.label}] recovered on attempt ${attempt}/${maxAttempts}`,
+        );
+      }
+      // The AI SDK's `object` type widens to `unknown`/`any` depending
+      // on the schema shape; cast back to the inferred Zod output.
+      return {
+        object: result.object as z.infer<S>,
+        usage: result.usage,
+      };
+    } catch (err) {
+      lastError = err;
+      const retryable =
+        NoObjectGeneratedError.isInstance(err) ||
+        JSONParseError.isInstance(err) ||
+        TypeValidationError.isInstance(err);
+      if (!retryable || attempt >= maxAttempts) throw err;
+      console.warn(
+        `[ai.${opts.label}] structured-output failure on attempt ${attempt}/${maxAttempts}; retrying. cause=${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      // Short backoff. We're not throttle-bound here (this is a
+      // schema-shape problem, not a rate-limit one), but a small
+      // gap avoids hammering the provider in pathological cases.
+      await new Promise((r) => setTimeout(r, 250 * attempt));
+    }
+  }
+
+  throw lastError;
 }
 
 function ensureApiKey(provider: AiProvider) {
@@ -338,11 +471,12 @@ async function runAuditPass(
   const auditParts = buildAuditUserContent(primaryUserParts, primaryRecipe);
 
   const startedAt = Date.now();
-  const { object, usage } = await generateObject({
+  const { object, usage } = await generateObjectResilient({
     model: modelHandle(provider, model),
     schema: extractionIssuesWireSchema,
     system: AUDIT_SYSTEM_PROMPT,
     messages: [{ role: "user", content: auditParts }],
+    label: "audit",
   });
   const elapsedMs = Date.now() - startedAt;
 
@@ -520,11 +654,12 @@ async function runExtraction(
 
   const provider = aiProvider();
   const startedAt = Date.now();
-  const { object, usage } = await generateObject({
+  const { object, usage } = await generateObjectResilient({
     model: modelHandle(provider, model),
     schema: extractedRecipeWireSchema,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userParts }],
+    label: "extract",
   });
   const elapsedMs = Date.now() - startedAt;
 
