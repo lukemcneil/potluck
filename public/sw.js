@@ -10,8 +10,18 @@
  *   - /uploads/*       — cache-first (recipe photos are immutable per id).
  *   - /_next/static/*  — cache-first (hashed filenames; immutable).
  *   - /icons/*, /manifest.webmanifest — cache-first.
- *   - HTML navigations — stale-while-revalidate, falling back to a cached
- *     copy when offline. As a last resort we serve /offline.
+ *   - HTML navigations — network-first, falling back to a cached copy
+ *     only when the network is unavailable. As a last resort we serve
+ *     /offline.
+ *
+ *     (We used to do stale-while-revalidate here for speed, but it
+ *     bit us on two fronts: (1) the OAuth callback redirects you to
+ *     /feed and the SW served the previously-cached signed-out HTML,
+ *     so AppBar still said "Sign in" until a refresh, and (2) after
+ *     creating a recipe the redirect bounced through /r/[id] but the
+ *     cached /feed survived, so the new recipe didn't show up until
+ *     a refresh. Freshness wins over speed for personalized pages.)
+ *
  *   - /api/*, /_next/image*, anything with a query string we don't
  *     control, and non-GETs — passthrough (no SW involvement).
  *
@@ -19,7 +29,7 @@
  * change to caching behavior. Old caches are deleted on `activate`.
  */
 
-const SW_VERSION = "v2";
+const SW_VERSION = "v3";
 const RUNTIME_CACHE = `potluck-runtime-${SW_VERSION}`;
 const PAGES_CACHE = `potluck-pages-${SW_VERSION}`;
 const PHOTOS_CACHE = `potluck-photos-${SW_VERSION}`;
@@ -213,49 +223,36 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 /**
- * Pages get stale-while-revalidate semantics:
- *   - Serve the cached HTML immediately if we have it (fast + works
- *     offline).
- *   - Always also kick off a background fetch and update the cache so
- *     the next visit gets fresh content.
- *   - If we have no cached copy and the network is down, fall back to
- *     /offline so the user lands somewhere coherent instead of a
- *     "no internet" browser screen.
+ * Pages use network-first with cache fallback:
+ *   - Try the network first so signed-in state, new recipes, edits,
+ *     and saves are reflected immediately on the very next navigation.
+ *   - On success, also write the fresh response to the page cache so
+ *     the user can revisit it offline later.
+ *   - On a network failure (offline / flaky wifi), fall back to the
+ *     cached copy if we have one, then to /offline as a last resort.
+ *
+ * Why not stale-while-revalidate? Personalized pages (everything under
+ * /(app)) embed session state directly in the HTML — the AppBar shows
+ * the user's avatar, /feed lists recipes filtered by visibility, etc.
+ * Serving a stale copy and silently refreshing the cache means the
+ * user sees the wrong state on the visit immediately after signing in
+ * or creating a recipe, and only sees the correct state on the *next*
+ * navigation (which is what "I have to refresh" felt like to the user).
  */
 async function htmlNavigationStrategy(request) {
   const cache = await caches.open(PAGES_CACHE);
-  const cached = await cache.match(request, { ignoreSearch: false });
-
-  const networkPromise = fetch(request)
-    .then((response) => {
-      // Don't cache redirects or auth-gated bounces; they'd lock the
-      // user into the redirected URL forever offline.
-      if (
-        response.ok &&
-        response.status === 200 &&
-        !response.redirected
-      ) {
-        cache.put(request, response.clone()).catch(() => {});
-      }
-      return response;
-    })
-    .catch((err) => {
-      // Network failure — surface up; the caller decides between
-      // cached copy and the offline page.
-      throw err;
-    });
-
-  if (cached) {
-    // Stale-while-revalidate: kick off the refresh but don't await.
-    networkPromise.catch(() => {
-      /* ignore — we already served from cache */
-    });
-    return cached;
-  }
 
   try {
-    return await networkPromise;
+    const response = await fetch(request);
+    // Don't cache redirects, error responses, or auth-gated bounces;
+    // they'd lock the user into the redirected URL forever offline.
+    if (response.ok && response.status === 200 && !response.redirected) {
+      cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
   } catch {
+    const cached = await cache.match(request, { ignoreSearch: false });
+    if (cached) return cached;
     const offline = await cache.match("/offline");
     if (offline) return offline;
     // Last-ditch fallback: a tiny inline response so the browser at

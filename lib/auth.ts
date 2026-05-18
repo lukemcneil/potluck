@@ -4,6 +4,7 @@ import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
 import {
@@ -74,6 +75,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           isDefaultSaves: true,
         })
         .onConflictDoNothing();
+    },
+    /*
+     * Force the (app) layout to re-render on sign-in / sign-out so
+     * AppBar reflects the new session state on the very next
+     * navigation. Without this, the Next.js client router cache (and
+     * the service-worker page cache on a fresh install) can serve the
+     * previously-rendered shell — so right after sign-in AppBar still
+     * shows the "Sign in" button until the user manually refreshes.
+     *
+     * revalidatePath('/', 'layout') is a sledgehammer: it invalidates
+     * the root layout AND every page under it. That's fine here —
+     * every page in this app is `force-dynamic` already, so the only
+     * thing we're throwing away is cached personalized data that the
+     * old session can no longer see anyway.
+     */
+    async signIn() {
+      revalidatePath("/", "layout");
+    },
+    async signOut() {
+      revalidatePath("/", "layout");
     },
   },
   callbacks: {

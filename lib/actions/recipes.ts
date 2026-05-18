@@ -143,6 +143,16 @@ export async function createRecipeAction(
 
   revalidatePath("/feed");
   if (handle) revalidatePath(`/u/${handle}`);
+  // The two path-specific revalidates above invalidate the SERVER
+  // cache for /feed and the author's profile, but Next's client
+  // router cache (and the BottomTabBar's prefetches) can still serve
+  // a previously-rendered /feed when the user taps Home after
+  // creating a recipe — so the new recipe doesn't show up until a
+  // manual refresh. Invalidating the root layout drops the whole
+  // client cache subtree, which is cheap on this app (every page is
+  // already force-dynamic) and is the only thing that reliably makes
+  // "create recipe → tap Home → see it" work in one shot.
+  revalidatePath("/", "layout");
   redirect(`/r/${recipeId}`);
 }
 
@@ -300,6 +310,10 @@ export async function updateRecipeAction(
   revalidatePath(`/r/${recipeId}`);
   revalidatePath("/feed");
   if (handle) revalidatePath(`/u/${handle}`);
+  // Same router-cache reasoning as createRecipeAction — edits to
+  // title/description/photos need to land on the feed card and on
+  // any collection thumbnails the next time the user views them.
+  revalidatePath("/", "layout");
   redirect(`/r/${recipeId}`);
 }
 
@@ -318,6 +332,10 @@ export async function deleteRecipeAction(recipeId: string): Promise<void> {
   db.delete(recipes).where(eq(recipes.id, recipeId)).run();
   revalidatePath("/feed");
   if (session.user.handle) revalidatePath(`/u/${session.user.handle}`);
+  // Same router-cache reasoning as createRecipeAction — a deleted
+  // recipe also disappears from saves, collection covers, and any
+  // other surface, so drop the whole client cache subtree.
+  revalidatePath("/", "layout");
 }
 
 // Light read helpers used by detail / profile pages.

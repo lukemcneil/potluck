@@ -416,7 +416,8 @@ The "Print" button on `/r/[id]` is a tiny client-only `<PrintButton>` that calls
 - `public/sw.js` is a hand-rolled service worker (no `next-pwa`). Caching strategy is split per request type:
   - `/uploads/*` → cache-first into `potluck-photos-vN`. Photos are immutable per id so once we have one, we never refetch.
   - `/_next/static/*`, `/icons/*`, `/manifest.webmanifest` → cache-first into `potluck-runtime-vN`. Hashed/static, also effectively immutable.
-  - HTML navigations (and Accept: text/html responses) → stale-while-revalidate into `potluck-pages-vN`. Cached HTML is served immediately; a background fetch refreshes for next time. When neither cache nor network is available, the SW returns the pre-cached `/offline` page.
+  - HTML navigations (and `Accept: text/html` responses) → **network-first** into `potluck-pages-vN`. Try the network first; on success, write the fresh response back into the cache so the page is still available offline. Only fall back to the cached copy when the network is unavailable, then to the pre-cached `/offline` page as a last resort.
+    - **Why not stale-while-revalidate?** Personalized pages (everything under `(app)`) embed session state in the HTML — `AppBar` shows the user's avatar, `/feed` lists recipes filtered by visibility, etc. SWR served the previously-cached signed-out `/feed` right after the OAuth callback (AppBar still said "Sign in" until a refresh), and the previously-cached `/feed` after creating a recipe (the new recipe didn't show up until a refresh). Bumped `SW_VERSION` to `v3` when this changed so old caches get cleared on the next service-worker activation.
   - Anything else (RSC payloads, fonts) → network-first with cache fallback. This is what makes Next.js link-based navigation between cached recipes still work offline.
   - `/api/*`, `/_next/image*`, non-GET → passthrough; never cached.
   - Cache names embed `SW_VERSION`; bump it when caching behavior changes meaningfully and the `activate` handler will GC older caches.
@@ -594,6 +595,7 @@ What we deliberately did NOT do (per the May 2026 design discussion):
 - **shadcn 4.x default = `base-nova` style** (uses `@base-ui/react`, not radix). Components reference `@/lib/utils` for `cn()` — already created.
 - **Tailwind v4** uses CSS-first config: theme tokens live in `app/globals.css` under `@theme inline`. There is no `tailwind.config.ts` (or it's empty).
 - **Static SSG of pages that touch the DB** will fail at build time without a DB. Mark such pages `export const dynamic = "force-dynamic"` or use `noStore()`.
+- **Layout-level revalidation for session / feed-shaping changes**: `lib/auth.ts` (`events.signIn` / `events.signOut`) and `lib/actions/recipes.ts` (`createRecipeAction`, `updateRecipeAction`, `deleteRecipeAction`) both call `revalidatePath("/", "layout")` in addition to the path-specific revalidates. The path-specific calls handle the server data cache, but the `"/", "layout"` form is what actually drops Next's client-side Router Cache so that the next soft navigation (e.g. tapping "Home" in `BottomTabBar`) re-fetches `/feed` instead of serving the previously-rendered shell. Without it, "I added a recipe but it doesn't show up in the feed until I refresh" and "I just signed in but the AppBar still shows 'Sign in'" come right back. Cheap on this app — every (app) page is already `force-dynamic`.
 
 ## Tunnel mode (testing on a phone)
 
