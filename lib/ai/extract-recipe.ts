@@ -639,7 +639,8 @@ Rules:
 - Only flag mistakes you can support by re-reading the source. Don't speculate.
 - Don't flag cosmetic differences (capitalization, ordering of equivalent phrasing, trailing punctuation, "tablespoons" vs "tbsp" when both are unambiguous).
 - "reason" should be a one-sentence explanation grounded in the source — quote the source if helpful.
-- If everything looks correct, set "looksCorrect": true and return empty arrays. Don't invent issues to fill space.`;
+- If everything looks correct, set "looksCorrect": true and return empty arrays. Don't invent issues to fill space.
+- INGREDIENT-ONLY SOURCES: many real-world inputs (Instagram screenshots, magazine "build your own" boxes, hand-written family cards) only list ingredients and have no method/instructions section at all. In that case an empty "steps" array in the extracted recipe is the CORRECT answer — do NOT emit "missing" step issues, and do NOT suggest the extractor "forgot" the steps. Only flag missing steps when the source clearly contains a numbered or paragraph-form method that the extractor failed to transcribe.`;
 
 const TIMEOUT_SENTINEL = Symbol("verification-timeout");
 

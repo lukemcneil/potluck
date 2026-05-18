@@ -517,6 +517,37 @@ describe("issuesToDiscrepancies", () => {
     });
   });
 
+  it("safely clamps a hallucinated missing-step issue against an empty primary steps array", () => {
+    // Backstop for the AUDIT_SYSTEM_PROMPT empty-steps guidance: even
+    // if the auditor hallucinates a "missing" step against an
+    // ingredient-only recipe (where primary.steps is correctly empty),
+    // the translator must clamp insertPosition to 0 and produce a
+    // sensible discrepancy that the review UI can handle. The real
+    // defense is the prompt — this test just locks in that the
+    // translator doesn't crash or emit a nonsensical index when the
+    // prompt fails to suppress the hallucination.
+    const primary = recipe({ steps: [] });
+    const issues: ExtractionIssues = {
+      looksCorrect: false,
+      ingredientIssues: [],
+      stepIssues: [
+        stepIssue({
+          primaryIndex: null,
+          kind: "missing",
+          insertPosition: 42, // Past the (empty) end.
+          correctedText: "Hallucinated step the source doesn't have.",
+          reason: "Auditor hallucinated this against ingredient-only source.",
+        }),
+      ],
+    };
+    const out = issuesToDiscrepancies(issues, primary);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      kind: "step_missing_from_original",
+      suggestedIndex: 0, // Clamped to primary.steps.length (= 0).
+    });
+  });
+
   it("translates step missing into step_missing_from_original with clamped insert position", () => {
     const primary = recipe({ steps: [step("Mix.")] });
     const issues: ExtractionIssues = {
