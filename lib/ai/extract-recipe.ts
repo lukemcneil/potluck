@@ -322,15 +322,16 @@ const SYSTEM_PROMPT = `You are a careful recipe transcription assistant.
 You convert photos and webpages into clean, structured recipes.
 
 NOT-A-RECIPE GUARDRAIL (most important rule):
-- If the input does NOT contain a real recipe (e.g. a news article, a login wall, a screenshot of email, a generic food photo with no instructions, a landing/category page that just lists recipe links, an error page, or any image with no readable recipe content), set "notARecipe": true and write a one-sentence "reason" explaining what you saw. Do NOT invent ingredients or steps to fill the schema.
-- Only set "notARecipe": false when you can extract at least a title, ingredients, and ordered steps grounded in the input.
+- If the input does NOT contain a real recipe (e.g. a news article, a login wall, a screenshot of email, a plated-food photo with no readable ingredient list or instructions, a landing/category page that just lists recipe links, an error page, or any image with no readable recipe content), set "notARecipe": true and write a one-sentence "reason" explaining what you saw. Do NOT invent ingredients or steps to fill the schema.
+- Only set "notARecipe": false when you can extract at least a title AND a readable ingredient list grounded in the input.
+- Cooking steps are NICE TO HAVE, NOT REQUIRED. Many real-world sources (Instagram posts, magazine "build your own" boxes, hand-written family cards, ingredient checklists) only have ingredients with no method. Treat those as valid recipes: extract the title and ingredients, return an empty "steps" array, and set "notARecipe": false. Do NOT invent steps to fill the gap.
 
 When a recipe IS present:
 - For webpages, you'll be given the page's raw HTML. Look for a JSON-LD <script type="application/ld+json"> block with a Recipe schema first — if present, prefer those values exactly. Otherwise, extract from the visible content. Ignore navigation, ads, comments, and unrelated articles.
 - Combine information across all provided images: a multi-page recipe may span them.
 - Preserve quantities exactly as written (fractions like "1 1/2" stay as text).
 - Split each ingredient into quantity, unit, name, and an optional note (e.g. "sifted", "chopped").
-- Steps must be ordered, action-oriented sentences. Do not number them — that's done by the UI.
+- When the source DOES have steps, they must be ordered, action-oriented sentences. Do not number them — that's done by the UI. When the source has NO steps (ingredient-only inputs), return an empty steps array — do not synthesize generic instructions.
 - If a value is unknown, set it to null. Do not invent times, servings, or ingredients.
 - For mealType, choose ONE of: breakfast, brunch, lunch, dinner, appetizer, side, dessert, snack, drink.
 - Cuisine should be a short common label like "italian" or "thai" if obvious; otherwise null.
@@ -730,10 +731,14 @@ async function runExtraction(
     cachedInputTokens: usage.cachedInputTokens,
   });
 
+  // "Empty enough that it's not a recipe": no title or no ingredients.
+  // We deliberately DON'T require steps — an Instagram-style ingredient
+  // list (no method) is still a recipe worth saving. See the matching
+  // change in extractedRecipeSchema's `steps` field and the SYSTEM_PROMPT
+  // guidance below. The cook can fill the steps in later from memory or
+  // by linking the source URL.
   const looksEmpty =
-    !object.title.trim() ||
-    object.ingredients.length === 0 ||
-    object.steps.length === 0;
+    !object.title.trim() || object.ingredients.length === 0;
   const isNoRecipe = object.notARecipe || looksEmpty;
   const outcome = isNoRecipe ? "no-recipe" : "ok";
 

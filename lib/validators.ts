@@ -153,6 +153,14 @@ export const extractedRecipeSchema = z.object({
     )
     .min(1, "Recipe must have at least one ingredient")
     .max(80),
+  // Steps are intentionally allowed to be empty. Lots of real-world
+  // sources are ingredient-only — Instagram screenshots of a recipe
+  // card with just the components, a magazine "build your own bowl"
+  // box, a parent's hand-written list with no method ("you know how
+  // to make it"). When the source genuinely has no instructions, we'd
+  // rather save the ingredients half than throw the whole import
+  // away. The recipe detail page already renders a "no steps yet"
+  // empty state, and the editor lets the cook fill them in later.
   steps: z
     .array(
       z.object({
@@ -160,7 +168,6 @@ export const extractedRecipeSchema = z.object({
         confidence: confidenceSchema,
       }),
     )
-    .min(1)
     .max(60),
   prepMinutes: z.number().int().min(0).max(60 * 24).nullable(),
   cookMinutes: z.number().int().min(0).max(60 * 24).nullable(),

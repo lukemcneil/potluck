@@ -127,13 +127,21 @@ describe("extractedRecipeSchema (strict content shape)", () => {
     suggestedTags: ["make-ahead", "freezer-friendly"],
   };
 
-  it("requires at least one ingredient and one step", () => {
+  it("requires at least one ingredient", () => {
     expect(
       extractedRecipeSchema.safeParse({ ...baseValid, ingredients: [] })
         .success,
     ).toBe(false);
-    expect(extractedRecipeSchema.safeParse({ ...baseValid, steps: [] }).success)
-      .toBe(false);
+  });
+
+  it("accepts an ingredients-only recipe with no steps", () => {
+    // Instagram screenshots, magazine "build your own" boxes, and
+    // hand-written family cards often only list ingredients with no
+    // method. The schema MUST accept these — see lib/ai/extract-recipe.ts
+    // for the matching prompt + post-processing guards.
+    const parsed = extractedRecipeSchema.parse({ ...baseValid, steps: [] });
+    expect(parsed.steps).toEqual([]);
+    expect(parsed.ingredients.length).toBeGreaterThan(0);
   });
 
   it("accepts a realistic AI output", () => {
