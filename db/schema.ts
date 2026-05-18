@@ -150,6 +150,20 @@ export const recipes = sqliteTable(
     prepMinutes: integer("prepMinutes"),
     cookMinutes: integer("cookMinutes"),
     servings: text("servings"),
+    /**
+     * Parsed-numeric view of `servings`. Populated whenever
+     * `parseQuantity(servings)` returns a number; null otherwise
+     * ("1 loaf", "a dozen", "makes 12 cookies").
+     *
+     * Purpose: lets the servings stepper on the detail page choose
+     * between the "12 → 24 servings" UI (when this is set) and the
+     * "1× → 2× multiplier" UI (when it's null). Recipes are ALWAYS
+     * scalable now — we just pick the right interaction model based
+     * on whether the yield itself has a numeric anchor. See
+     * `components/recipe/RecipeBody.tsx` and
+     * `lib/cooking/numerics.ts` for the derivation/lookup logic.
+     */
+    servingsNumeric: real("servingsNumeric"),
 
     mealType: text("mealType", { enum: MEAL_TYPES }),
     cuisine: text("cuisine"),
@@ -213,7 +227,23 @@ export const recipeIngredients = sqliteTable(
       .notNull()
       .references(() => recipes.id, { onDelete: "cascade" }),
     position: integer("position").notNull().default(0),
+    /**
+     * Author's original quantity text. Preserved verbatim so the
+     * recipe still reads like the source — "1½", "1 1/2", "a pinch",
+     * "to taste", "scant 1/2 cup" all round-trip exactly as typed.
+     */
     quantity: text("quantity"),
+    /**
+     * Parsed-numeric view of `quantity`. Populated at write time when
+     * `parseQuantity(quantity)` succeeds; null when the text isn't
+     * math-friendly ("a pinch", "to taste"). Math reads this directly
+     * — if it's null, the scaling layer leaves the ingredient
+     * untouched and the UI flags it with a small "not scaled" badge
+     * so cooks aren't quietly misled. Ranges (e.g. "1-2") store the
+     * midpoint here; the original "1-2" text in `quantity` is what
+     * gets re-rendered.
+     */
+    quantityNumeric: real("quantityNumeric"),
     unit: text("unit"),
     name: text("name").notNull(),
     note: text("note"),
@@ -465,6 +495,14 @@ export const shoppingListItems = sqliteTable(
       .references(() => shoppingLists.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     quantity: text("quantity"),
+    /**
+     * Same shape as `recipeIngredients.quantityNumeric` — parsed-once
+     * numeric view of `quantity`. Used by `consolidate()` to sum
+     * matched rows instead of re-parsing on every read, and to
+     * decide when a quantity is non-numeric ("a splash") and should
+     * stay separate from numeric subtotals.
+     */
+    quantityNumeric: real("quantityNumeric"),
     unit: text("unit"),
     sourceRecipeId: text("sourceRecipeId").references(() => recipes.id, {
       onDelete: "set null",

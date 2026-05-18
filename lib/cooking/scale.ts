@@ -111,15 +111,27 @@ function parseSingle(input: string): number | null {
 }
 
 /**
- * Render a number as a human-friendly quantity string. Snaps to
- * eighths so weird floating-point results (`0.99999`, `0.333333`) come
- * out as kitchen-readable fractions.
+ * Render a number as a human-friendly quantity string with Unicode
+ * vulgar-fraction glyphs ("1 ½ cups", "⅔ tsp"). Snaps to eighths so
+ * weird floating-point results (`0.99999`, `0.333333`) come out as
+ * kitchen-readable fractions instead of decimal noise.
+ *
+ * Why glyphs (vs ASCII "1 1/2"): they're more compact, scan as
+ * "a recipe" rather than "code", and are what most printed
+ * cookbooks use. We can render them in the form field too — the
+ * input field accepts both forms.
  *
  * Examples:
- *   formatQuantity(1.5)    -> "1 1/2"
- *   formatQuantity(0.75)   -> "3/4"
- *   formatQuantity(0.3333) -> "1/3"
+ *   formatQuantity(1.5)    -> "1 ½"
+ *   formatQuantity(0.75)   -> "¾"
+ *   formatQuantity(0.3333) -> "⅓"
  *   formatQuantity(2)      -> "2"
+ *
+ * For fractions outside the Unicode set (1/5, 5/8, etc.) we fall
+ * back to ASCII so we don't silently change values — "⅝" exists
+ * but is less recognisable, so we prefer "5/8" to keep cooks who
+ * don't read fancy glyphs unconfused. The full Unicode set is
+ * supported by parseQuantity for round-tripping.
  */
 export function formatQuantity(value: number): string {
   if (!Number.isFinite(value)) return "";
@@ -130,11 +142,11 @@ export function formatQuantity(value: number): string {
   const thirdsRemainder = abs - Math.floor(abs);
   if (closeTo(thirdsRemainder, 1 / 3, 0.02)) {
     const whole = Math.floor(abs);
-    return `${sign}${whole > 0 ? `${whole} ` : ""}1/3`;
+    return `${sign}${whole > 0 ? `${whole} ` : ""}\u2153`; // ⅓
   }
   if (closeTo(thirdsRemainder, 2 / 3, 0.02)) {
     const whole = Math.floor(abs);
-    return `${sign}${whole > 0 ? `${whole} ` : ""}2/3`;
+    return `${sign}${whole > 0 ? `${whole} ` : ""}\u2154`; // ⅔
   }
 
   // Snap to nearest 1/8.
@@ -149,10 +161,25 @@ export function formatQuantity(value: number): string {
   return `${sign}${whole} ${fracStr}`;
 }
 
+/**
+ * Map of common fractions to their Unicode glyph. We deliberately
+ * only glyph-ify the "everyday" set — ½, ¼, ¾, ⅛, ⅜ — that cooks
+ * recognize at a glance. ⅝ and ⅞ Unicode codepoints exist but are
+ * rarer in print, so we keep them as "5/8" / "7/8" for clarity.
+ */
+const EIGHTH_GLYPHS: Record<string, string> = {
+  "1/2": "\u00BD", // ½
+  "1/4": "\u00BC", // ¼
+  "3/4": "\u00BE", // ¾
+  "1/8": "\u215B", // ⅛
+  "3/8": "\u215C", // ⅜
+};
+
 function simplifyEighth(num: number): string {
   // num is in 1..7; reduce by gcd with 8.
   const g = gcd(num, 8);
-  return `${num / g}/${8 / g}`;
+  const reduced = `${num / g}/${8 / g}`;
+  return EIGHTH_GLYPHS[reduced] ?? reduced;
 }
 
 function gcd(a: number, b: number): number {
@@ -287,13 +314,18 @@ const UNIT_REGEX_FRAGMENT = (() => {
   return aliases.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 })();
 
-// Match a quantity (mixed/fraction/decimal/vulgar fraction) followed by a
-// known cooking unit. Lookbehind on whitespace / start / open-bracket so
-// that vulgar fractions (which aren't word chars and so don't get a \b)
-// still anchor cleanly. Trailing \b ensures "min" doesn't match "minute"
+// Match a quantity (mixed/fraction/decimal/vulgar fraction, optionally
+// glued-onto-an-integer like "1½") followed by a known cooking unit.
+// Lookbehind on whitespace / start / open-bracket so that vulgar
+// fractions (which aren't word chars and so don't get a \b) still
+// anchor cleanly. Trailing \b ensures "min" doesn't match "minute"
 // inside "30 minutes" — only known units anchor the unit side.
+//
+// Alternation order matters: longer/more-specific shapes come first
+// (mixed-with-vulgar "1½", mixed-with-ascii "1 1/2") so the regex
+// engine doesn't greedily consume just the "1" out of "1½ cups".
 const QUANTITY_UNIT_RE = new RegExp(
-  String.raw`(?<=^|[\s([])(\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:\.\d+)?|[\u00BC-\u00BE\u2153-\u215E])\s+(` +
+  String.raw`(?<=^|[\s([])(\d+[\u00BC-\u00BE\u2153-\u215E]|\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:\.\d+)?|[\u00BC-\u00BE\u2153-\u215E])\s+(` +
     UNIT_REGEX_FRAGMENT +
     String.raw`)\b`,
   "gi",

@@ -102,9 +102,9 @@ See `db/schema.ts` (when created). Tables:
 
 - `users` — id, email, name, **handle** (unique, used in `/u/[handle]`), image, createdAt
 - Auth.js: `accounts`, `sessions`, `verificationTokens`
-- `recipes` — id, authorId, title, slug, description, prepMinutes, cookMinutes, servings, mealType, cuisine, diets (JSON), visibility (`public` | `unlisted` | `private`), kind (`structured` | `photos_only`), createdAt, updatedAt
+- `recipes` — id, authorId, title, slug, description, prepMinutes, cookMinutes, servings (TEXT) + servingsNumeric (REAL, parsed-once view of `servings` for the scaling stepper), mealType, cuisine, diets (JSON), visibility (`public` | `unlisted` | `private`), kind (`structured` | `photos_only`), createdAt, updatedAt
 - `recipePhotos` — id, recipeId, position, path, blurhash, width, height, **role** (`"cover" | "source"`, default `cover`). Cover photos drive the recipe's visual identity (carousel, feed cards, OG, collection covers). Source photos are paper recipe cards / magazine clippings / screenshots kept for later verification and surfaced in a quieter "Source materials" section on the detail page. One photo has exactly one role; to use the same shot for both, upload it twice.
-- `recipeIngredients` — id, recipeId, position, quantity, unit, name, note
+- `recipeIngredients` — id, recipeId, position, quantity (TEXT) + quantityNumeric (REAL, parsed-once view; null for "a pinch" etc., which the UI surfaces as a "won't scale" badge during scaling), unit, name, note
 - `recipeSteps` — id, recipeId, position, body
 - `tags` — id, name (unique, lowercased)
 - `recipeTags` — recipeId, tagId (composite PK)
@@ -290,11 +290,34 @@ Notes:
 
 ## Cook mode + servings scaling
 
-- `lib/cooking/scale.ts` (20 vitest assertions in `lib/__tests__/scale.test.ts`):
-  - `parseQuantity` handles integers, decimals, simple fractions (`3/4`), mixed numbers (`1 1/2`), unicode vulgar fractions (`½`, `1¼`, `⅔`, `⅛`–`⅞`), and ranges (`1-2`, `1 to 2`).
-  - `formatQuantity` snaps to nearest 1/8 with special cases for thirds — so `1.5 × (2/3) = 1`, not `0.99999`.
-  - `scaleQuantity(input, factor)` round-trips: parse → multiply → format. Unparseable strings (`"a pinch"`) are returned unchanged.
-- `components/recipe/RecipeBody.tsx` hosts the servings stepper on the recipe detail page and applies a single scaling factor to both the ingredients list and the inline `<qty> <unit>` tokens inside step prose (via `scaleStepText`). If `recipe.servings` doesn't parse to a single number the stepper is hidden and the static list is rendered.
+### Storage shape
+
+- Quantities and yields are stored twice on every row:
+  - `recipes.servings TEXT` / `recipes.servingsNumeric REAL`
+  - `recipeIngredients.quantity TEXT` / `recipeIngredients.quantityNumeric REAL`
+  - `shoppingListItems.quantity TEXT` / `shoppingListItems.quantityNumeric REAL`
+- The text column carries the author's original wording verbatim (`"1½"`, `"1 1/2"`, `"a pinch"`, `"1-2 servings"`, `"1 loaf"`). The numeric companion is `parseQuantity(text)`-derived at the server-action write boundary via `lib/cooking/numerics.ts#deriveNumeric`, and is `null` whenever the text isn't math-friendly. Ranges store their midpoint.
+- Auto-backfill in `scripts/migrate.ts` parses every existing row on first run after migration `0006_free_valkyrie.sql` (idempotent — only touches rows where the numeric is still NULL).
+
+### Parsing + formatting
+
+- `lib/cooking/scale.ts`:
+  - `parseQuantity` handles integers, decimals, simple fractions (`3/4`), mixed numbers (`1 1/2`, `1½`), Unicode vulgar fractions (`½`, `1¼`, `⅔`, `⅛`–`⅞`), and ranges (`1-2`, `1 to 2`).
+  - `formatQuantity` snaps to nearest 1/8 with special cases for thirds and renders Unicode glyphs for the recognisable set (½ ¼ ¾ ⅛ ⅜ ⅓ ⅔). Rarer fractions (5/8, 7/8) fall back to ASCII intentionally — they're harder to read at a glance than `5/8`.
+  - `scaleQuantity(input, factor)` round-trips: parse → multiply → format. Unparseable strings (`"a pinch"`) are returned unchanged so we never silently lose information.
+  - `scaleStepText` rescales `<qty> <unit>` tokens embedded in step prose, including mixed forms like `"1½ cups"`.
+- `lib/shopping/consolidate.ts` imports the same `formatQuantity` — the old local copy was deleted, so we only have one render path.
+
+### UI: every recipe is scalable
+
+- `components/recipe/ServingsControl.tsx` (shared by RecipeBody and CookMode):
+  - `deriveScalingMode(servingsNumeric)` picks the stepper mode. `servingsNumeric > 0` → "servings count" mode (12 → 24, integer steps, bounded [1, 99]). `null` or `≤ 0` → "multiplier" mode anchored at 1× walking a sparse ladder (¼×, ⅓×, ½×, ⅔×, ¾×, 1×, 1½×, 2×, 3×, 4×, 6×, 8×) so "1 loaf" recipes still scale cleanly.
+  - The author's original yield text is surfaced as a small "(1 loaf)" hint next to the stepper in multiplier mode.
+- `components/recipe/UnscaledBadge.tsx` is a tiny "won't scale" pill rendered next to ingredients whose `quantityNumeric` is `null` once the user has moved away from 1×. This closes the silent-failure mode where doubling a recipe quietly left `"a pinch"` and `"to taste"` rows at their original amounts.
+- `RecipeBody` and `CookMode` both preserve the author's wording at factor === 1 (so `"1½"` stays `"1½"`, not snapped to `"1 ½"`); the formatter only takes over once we leave the base scale.
+
+### Cook mode
+
 - `app/(app)/r/[id]/cook/page.tsx` + `components/recipe/CookMode.tsx` is the full-screen cooking view. It uses `screen.wakeLock.request("screen")` (best-effort, re-acquired on `visibilitychange`) so the device doesn't sleep mid-recipe. Layered at `z-50` so it sits above `AppBar` (z-30) and `BottomTabBar` (z-40) without needing a separate route group.
 
 ## Photo carousel

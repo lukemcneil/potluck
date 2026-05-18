@@ -72,8 +72,9 @@
 
 - [x] `app/(app)/r/[id]/page.tsx` — hero photo, ingredients, numbered steps, time/servings/visibility badges, author link
 - [x] Hero photo carousel (`components/recipe/PhotoCarousel.tsx` — scroll-snap, dot indicators, desktop arrows, single-photo fallback)
-- [x] `lib/cooking/scale.ts` — fraction-aware quantity parser + scaler (handles `1 1/2`, `3/4`, `0.5`, `½`, `1-2` ranges); 20 vitest assertions
-- [x] `components/recipe/RecipeBody.tsx` — servings stepper that rescales ingredient quantities + inline `<qty> <unit>` tokens in step prose; snaps to eighths/thirds
+- [x] `lib/cooking/scale.ts` — fraction-aware quantity parser + scaler (handles `1 1/2`, `3/4`, `0.5`, `½`, `1½`, `1-2` ranges); renders back to Unicode glyphs; 20+ vitest assertions
+- [x] `lib/cooking/numerics.ts` — `deriveNumeric()` converts free-text quantities/servings into the math-friendly companion stored in `*.quantityNumeric` / `recipes.servingsNumeric`; null for non-numeric strings ("a pinch", "1 loaf")
+- [x] `components/recipe/RecipeBody.tsx` + `ServingsControl.tsx` — every recipe is scalable: "servings count" stepper when the yield parses numerically, "1×/½×/2× multiplier" stepper when it doesn't; per-ingredient `UnscaledBadge` shows a "won't scale" pill on rows whose quantity isn't numeric so cooks aren't quietly misled
 - [x] `app/(app)/r/[id]/cook/page.tsx` — full-screen cook mode (large text, ingredient checkboxes, step-by-step nav, screen wake lock, exits to recipe)
 - [x] Print view (`@media print` styles in `app/globals.css` + `components/recipe/PrintButton.tsx`)
 - [x] `app/(app)/r/[id]/edit/page.tsx` — author-only edit, prefilled `RecipeForm` (mode=edit), preserves slug/URL
@@ -249,18 +250,29 @@
 
 ## Investigations (audit, not yet a task)
 
-- **Fractions vs decimals across the app**: audit how quantities are
-  parsed, scaled, displayed, consolidated, and round-tripped.
-  - Extractor stores raw text ("1 1/2", "0.5", "½").
-  - `lib/cooking/scale.ts` accepts all three forms but renders back to
-    fraction glyphs.
-  - Shopping-list `consolidate` uses its own parse + glyph format.
-  - Cook-mode + recipe body show scaled values; the seam between
-    scaled (decimal) and displayed (fraction) is worth checking for
-    drift, especially around values like 1/3 cup × 2 servings → 0.666
-    → "⅔" vs "0.67".
-  - Decide on a single canonical representation in storage and a
-    single render path.
+- [x] **Fractions vs decimals across the app** (resolved):
+  - Storage now carries BOTH the author's original text AND a parsed
+    numeric companion: `recipes.servingsNumeric REAL` and
+    `recipeIngredients.quantityNumeric REAL` / same on shopping list
+    items. Companions are derived at the server-action write boundary
+    via `lib/cooking/numerics.ts#deriveNumeric` so the wire contract
+    stays "text", and migration `0006_free_valkyrie.sql` plus the
+    auto-backfill in `scripts/migrate.ts` brought all existing rows
+    forward (7/9 recipes, 78/78 ingredients, 8/8 shopping items).
+  - Display is unified on Unicode glyphs: `lib/cooking/scale.ts#formatQuantity`
+    is the only formatter; the old `formatQuantity` local in
+    `lib/shopping/consolidate.ts` has been deleted. We glyph-ify the
+    cook-friendly set (½ ¼ ¾ ⅛ ⅜ ⅓ ⅔) and ASCII-fall-back the rarer
+    ones (5/8, 7/8) so cooks always recognise the value.
+  - Scaling reads the numeric companion. Every recipe is scalable —
+    `components/recipe/ServingsControl.tsx#deriveScalingMode` switches
+    the stepper between "servings count" (when `servingsNumeric` is set)
+    and "1×/2×/½× multiplier" (when it isn't). Ingredients whose
+    `quantityNumeric` is null ("a pinch", "to taste") show a small
+    `UnscaledBadge` ("won't scale") whenever the user has scaled away
+    from 1×, so we never silently mislead.
+  - Cook mode shares the same `ServingsControl` + `UnscaledBadge`, so
+    the detail page and the cooking view never drift.
 
 ---
 

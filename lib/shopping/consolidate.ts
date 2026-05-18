@@ -1,4 +1,4 @@
-import { parseQuantity } from "@/lib/cooking/scale";
+import { formatQuantity, parseQuantity } from "@/lib/cooking/scale";
 
 /**
  * Shopping-list ingredient consolidation.
@@ -120,29 +120,5 @@ export function consolidate(
   });
 }
 
-/**
- * Render a numeric quantity as the prettiest string we can:
- *   - Whole numbers: "3"
- *   - Common fractions: "½", "¼", "¾", "⅓", "⅔" (with whole part
- *     prepended when > 1, e.g. "1 ½")
- *   - Otherwise: 2 decimal places, trailing zeroes stripped.
- */
-function formatQuantity(n: number): string {
-  const rounded = Math.round(n * 1000) / 1000;
-  const whole = Math.trunc(rounded);
-  const frac = +(rounded - whole).toFixed(3);
-  const fracMap: Record<string, string> = {
-    "0.25": "¼",
-    "0.333": "⅓",
-    "0.5": "½",
-    "0.667": "⅔",
-    "0.75": "¾",
-  };
-  const glyph = fracMap[String(frac)];
-  if (glyph) {
-    return whole > 0 ? `${whole} ${glyph}` : glyph;
-  }
-  if (frac === 0) return String(whole);
-  // Two-decimal fallback, trim trailing zeroes.
-  return rounded.toFixed(2).replace(/\.?0+$/, "");
-}
+// (formatQuantity is now centralized in lib/cooking/scale.ts — same
+// Unicode-glyph output, same eighth-snapping math. Imported above.)

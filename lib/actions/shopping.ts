@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { consolidate } from "@/lib/shopping/consolidate";
+import { deriveNumeric } from "@/lib/cooking/numerics";
 
 type ActionResult<T = unknown> = {
   ok: boolean;
@@ -161,17 +162,21 @@ export async function addRecipesToShoppingListAction(args: {
   const now = new Date();
   db.insert(shoppingListItems)
     .values(
-      merged.map((m, i) => ({
-        id: crypto.randomUUID(),
-        listId: listId!,
-        name: m.name.slice(0, ITEM_NAME_MAX),
-        quantity: m.quantity?.slice(0, 40) ?? null,
-        unit: m.unit?.slice(0, 40) ?? null,
-        sourceRecipeId: m.sourceRecipeIds[0] ?? null,
-        position: startPos + i,
-        checked: false,
-        addedAt: now,
-      })),
+      merged.map((m, i) => {
+        const quantity = m.quantity?.slice(0, 40) ?? null;
+        return {
+          id: crypto.randomUUID(),
+          listId: listId!,
+          name: m.name.slice(0, ITEM_NAME_MAX),
+          quantity,
+          quantityNumeric: deriveNumeric(quantity),
+          unit: m.unit?.slice(0, 40) ?? null,
+          sourceRecipeId: m.sourceRecipeIds[0] ?? null,
+          position: startPos + i,
+          checked: false,
+          addedAt: now,
+        };
+      }),
     )
     .run();
 
@@ -213,12 +218,14 @@ export async function addShoppingItemAction(
       .where(eq(shoppingListItems.listId, listId))
       .get()?.n) ?? 0;
 
+  const quantity = input.quantity?.trim()?.slice(0, 40) || null;
   db.insert(shoppingListItems)
     .values({
       id,
       listId,
       name: name.slice(0, ITEM_NAME_MAX),
-      quantity: input.quantity?.trim()?.slice(0, 40) || null,
+      quantity,
+      quantityNumeric: deriveNumeric(quantity),
       unit: input.unit?.trim()?.slice(0, 40) || null,
       sourceRecipeId: null,
       position: startPos,

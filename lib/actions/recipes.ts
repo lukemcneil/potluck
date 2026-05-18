@@ -16,6 +16,7 @@ import {
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { recipeFormSchema, slugify } from "@/lib/validators";
+import { deriveNumeric } from "@/lib/cooking/numerics";
 
 type State = { error?: string; fieldErrors?: Record<string, string[]> };
 
@@ -67,6 +68,11 @@ export async function createRecipeAction(
         prepMinutes: parsed.prepMinutes ?? null,
         cookMinutes: parsed.cookMinutes ?? null,
         servings: parsed.servings ?? null,
+        // Parsed-once numeric view. Null when servings is empty or
+        // non-numeric ("1 loaf"); the detail page falls through to
+        // the multiplier-stepper UI in that case. See
+        // components/recipe/RecipeBody.tsx + lib/cooking/numerics.ts.
+        servingsNumeric: deriveNumeric(parsed.servings ?? null),
         mealType: parsed.mealType ?? null,
         cuisine: parsed.cuisine ?? null,
         diets: parsed.diets ?? [],
@@ -85,6 +91,11 @@ export async function createRecipeAction(
             recipeId,
             position: i,
             quantity: ing.quantity ?? null,
+            // Parsed-once numeric view. Null when the quantity text is
+            // non-numeric ("a pinch", "to taste"); the recipe body UI
+            // dims those rows during scaling and renders a small
+            // "won't scale" note so the cook isn't quietly misled.
+            quantityNumeric: deriveNumeric(ing.quantity ?? null),
             unit: ing.unit ?? null,
             name: ing.name,
             note: ing.note ?? null,
@@ -221,6 +232,7 @@ export async function updateRecipeAction(
         prepMinutes: parsed.prepMinutes ?? null,
         cookMinutes: parsed.cookMinutes ?? null,
         servings: parsed.servings ?? null,
+        servingsNumeric: deriveNumeric(parsed.servings ?? null),
         mealType: parsed.mealType ?? null,
         cuisine: parsed.cuisine ?? null,
         diets: parsed.diets ?? [],
@@ -243,6 +255,7 @@ export async function updateRecipeAction(
             recipeId,
             position: i,
             quantity: ing.quantity ?? null,
+            quantityNumeric: deriveNumeric(ing.quantity ?? null),
             unit: ing.unit ?? null,
             name: ing.name,
             note: ing.note ?? null,

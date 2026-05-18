@@ -285,12 +285,14 @@ export default async function RecipePage({
         ingredients={ingredients.map((ing) => ({
           id: ing.id,
           quantity: ing.quantity ?? null,
+          quantityNumeric: ing.quantityNumeric ?? null,
           unit: ing.unit ?? null,
           name: ing.name,
           note: ing.note ?? null,
         }))}
         steps={steps.map((s) => ({ id: s.id, body: s.body }))}
         servings={recipe.servings ?? null}
+        servingsNumeric={recipe.servingsNumeric ?? null}
       />
 
       <RecipeNotes notes={recipe.notes ?? null} />

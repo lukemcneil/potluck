@@ -37,12 +37,14 @@ export default async function CookPage({
         id: data.recipe.id,
         title: data.recipe.title,
         servings: data.recipe.servings ?? null,
+        servingsNumeric: data.recipe.servingsNumeric ?? null,
         prepMinutes: data.recipe.prepMinutes ?? null,
         cookMinutes: data.recipe.cookMinutes ?? null,
       }}
       ingredients={data.ingredients.map((ing) => ({
         id: ing.id,
         quantity: ing.quantity ?? null,
+        quantityNumeric: ing.quantityNumeric ?? null,
         unit: ing.unit ?? null,
         name: ing.name,
         note: ing.note ?? null,

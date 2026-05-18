@@ -50,22 +50,29 @@ describe("formatQuantity", () => {
     expect(formatQuantity(2)).toBe("2");
   });
 
-  it("formats common fractions", () => {
-    expect(formatQuantity(0.5)).toBe("1/2");
-    expect(formatQuantity(0.75)).toBe("3/4");
-    expect(formatQuantity(0.25)).toBe("1/4");
-    expect(formatQuantity(0.125)).toBe("1/8");
+  it("formats common fractions as unicode glyphs", () => {
+    expect(formatQuantity(0.5)).toBe("\u00BD"); // ½
+    expect(formatQuantity(0.75)).toBe("\u00BE"); // ¾
+    expect(formatQuantity(0.25)).toBe("\u00BC"); // ¼
+    expect(formatQuantity(0.125)).toBe("\u215B"); // ⅛
   });
 
-  it("formats mixed numbers", () => {
-    expect(formatQuantity(1.5)).toBe("1 1/2");
-    expect(formatQuantity(2.75)).toBe("2 3/4");
+  it("formats mixed numbers with unicode glyphs", () => {
+    expect(formatQuantity(1.5)).toBe("1 \u00BD"); // 1 ½
+    expect(formatQuantity(2.75)).toBe("2 \u00BE"); // 2 ¾
   });
 
-  it("snaps thirds", () => {
-    expect(formatQuantity(1 / 3)).toBe("1/3");
-    expect(formatQuantity(2 / 3)).toBe("2/3");
-    expect(formatQuantity(1 + 1 / 3)).toBe("1 1/3");
+  it("snaps thirds to unicode glyphs", () => {
+    expect(formatQuantity(1 / 3)).toBe("\u2153"); // ⅓
+    expect(formatQuantity(2 / 3)).toBe("\u2154"); // ⅔
+    expect(formatQuantity(1 + 1 / 3)).toBe(`1 \u2153`); // 1 ⅓
+  });
+
+  it("falls back to ASCII for uncommon eighths", () => {
+    // We deliberately don't glyph-ify ⅝/⅞ because they're less
+    // recognisable in print than ½/¼/¾/⅛/⅜.
+    expect(formatQuantity(5 / 8)).toBe("5/8");
+    expect(formatQuantity(7 / 8)).toBe("7/8");
   });
 
   it("returns 0 for zero", () => {
@@ -78,8 +85,8 @@ describe("scaleQuantity", () => {
     expect(scaleQuantity("1 1/2", 2)).toBe("3");
   });
 
-  it("halves a fraction", () => {
-    expect(scaleQuantity("3/4", 0.5)).toBe("3/8");
+  it("halves a fraction (renders as unicode glyph)", () => {
+    expect(scaleQuantity("3/4", 0.5)).toBe("\u215C"); // ⅜
   });
 
   it("scales by 2/3", () => {
@@ -102,8 +109,13 @@ describe("scaleQuantity", () => {
     expect(scaleQuantity("a pinch", 2)).toBe("a pinch");
   });
 
-  it("handles factor === 1 as identity-ish", () => {
-    expect(scaleQuantity("1 1/2", 1)).toBe("1 1/2");
+  it("re-renders fraction shapes with unicode glyphs at factor === 1", () => {
+    // ASCII input still scales (so we don't have two formatting code
+    // paths at scale time), but the output uses the canonical
+    // unicode glyph form. The detail page preserves the author's
+    // original wording at factor=1 by reading recipeIngredients.quantity
+    // directly; scaleQuantity is only invoked once we leave 1×.
+    expect(scaleQuantity("1 1/2", 1)).toBe("1 \u00BD");
   });
 
   it("rejects bad factors", () => {
@@ -149,9 +161,9 @@ describe("pluralizeUnit", () => {
 });
 
 describe("scaleStepText", () => {
-  it("scales quantities with known units", () => {
+  it("scales quantities with known units (unicode-glyph output)", () => {
     expect(scaleStepText("Add 3 cups broth and simmer.", 0.5)).toBe(
-      "Add 1 1/2 cups broth and simmer.",
+      "Add 1 \u00BD cups broth and simmer.",
     );
     expect(scaleStepText("Add 2 cups broth.", 0.5)).toBe("Add 1 cup broth.");
   });
@@ -159,6 +171,18 @@ describe("scaleStepText", () => {
   it("handles fractions and mixed numbers", () => {
     expect(scaleStepText("Whisk in 1/2 tsp salt.", 2)).toBe("Whisk in 1 tsp salt.");
     expect(scaleStepText("Pour 1 1/2 cups milk.", 2)).toBe("Pour 3 cups milk.");
+  });
+
+  it("rescales unicode-glyph quantities in step text", () => {
+    // "1½ cups" mixed form: the regex now matches "1½" as a single
+    // quantity token (this was a regression case in the audit).
+    expect(scaleStepText("Pour in 1\u00BD cups milk.", 2)).toBe(
+      "Pour in 3 cups milk.",
+    );
+    // Solo glyph: "½ tsp" doubled is "1 tsp".
+    expect(scaleStepText("Whisk in \u00BD tsp salt.", 2)).toBe(
+      "Whisk in 1 tsp salt.",
+    );
   });
 
   it("ignores temperatures and times", () => {

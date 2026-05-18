@@ -1,21 +1,32 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Minus, Plus, RotateCcw } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
+  ServingsControl,
+  deriveScalingMode,
+} from "@/components/recipe/ServingsControl";
+import { UnscaledBadge } from "@/components/recipe/UnscaledBadge";
+import {
   formatIngredientPrefix,
-  parseQuantity,
+  formatQuantity,
   pluralizeUnit,
-  scaleQuantity,
   scaleStepText,
 } from "@/lib/cooking/scale";
+import { cn } from "@/lib/utils";
 
 export type IngredientRow = {
   id: string;
   quantity: string | null;
+  /**
+   * Parsed-numeric companion of `quantity`. Set at write time by
+   * `deriveNumeric()` in the server actions; null when the text is
+   * non-numeric ("a pinch", "to taste") so we can render an honest
+   * "won't scale" note instead of silently leaving the value at the
+   * original.
+   */
+  quantityNumeric: number | null;
   unit: string | null;
   name: string;
   note: string | null;
@@ -30,47 +41,87 @@ type Props = {
   ingredients: IngredientRow[];
   steps: StepRow[];
   /**
-   * The recipe's original servings string. We only render the scaler
-   * when this parses to a single number (e.g. "4"); ranges and
-   * unparseable strings just show the raw ingredients with no scaling.
+   * Author's free-text servings string ("12", "4-6 people", "1 loaf").
+   * Used as the visible "originally serves N" hint.
    */
   servings: string | null;
+  /**
+   * Parsed-numeric servings companion. When set, the stepper operates
+   * on servings count (12 → 24). When null, the recipe has a
+   * non-numeric yield ("1 loaf") and the stepper switches to a
+   * multiplier mode (1× → 2× → ½×). Either way, every recipe is
+   * scalable — the only thing that changes is the UI semantics.
+   */
+  servingsNumeric: number | null;
 };
 
 /**
  * Combined Ingredients + Steps view for the recipe detail page.
  *
- * The two sections share a single servings scaler so changing servings
- * also rescales any "<qty> <unit>" tokens embedded in the step prose
- * (e.g. "Add 3 cups broth" -> "Add 1 1/2 cups broth").
+ * Single source of truth for the scaling factor: the ServingsControl
+ * emits a target number (servings count or raw multiplier depending
+ * on mode), this component converts that into a multiplier `factor`,
+ * and that factor flows into per-ingredient and per-step rescaling.
+ *
+ * Scaling rules:
+ *   - Ingredients WITH `quantityNumeric` (parseable): multiply, snap
+ *     to eighths, render with Unicode glyphs.
+ *   - Ingredients WITHOUT `quantityNumeric` ("a pinch", "to taste"):
+ *     show the original text and append a small "won't scale" badge
+ *     when the user has actually rescaled. The badge avoids the old
+ *     dishonest "looks like it scaled" failure mode where the line
+ *     silently stayed at the original amount while the rest moved.
+ *   - Steps: regex-based rescale of "<qty> <unit>" tokens via
+ *     scaleStepText. Step prose has no per-token numeric companion
+ *     today; this stays best-effort.
  */
-export function RecipeBody({ ingredients, steps, servings }: Props) {
-  const baseServings = useMemo(() => {
-    const parsed = parseQuantity(servings ?? null);
-    if (!parsed) return null;
-    if (parsed.kind === "single" && parsed.value > 0) return parsed.value;
-    if (parsed.kind === "range" && parsed.low > 0) return parsed.low;
-    return null;
-  }, [servings]);
-
-  const [target, setTarget] = useState<number | null>(baseServings);
-  const factor =
-    baseServings != null && target != null && target > 0
-      ? target / baseServings
-      : 1;
-  const scaled = factor !== 1;
+export function RecipeBody({
+  ingredients,
+  steps,
+  servings,
+  servingsNumeric,
+}: Props) {
+  // Mode = "servings" when the author's yield parses as a number ("12"),
+  // "multiplier" otherwise ("1 loaf"). Both end up at the same `factor`.
+  const { mode, base } = deriveScalingMode(servingsNumeric);
+  const [target, setTarget] = useState<number>(base);
+  const factor = target > 0 ? target / base : 1;
+  const scaled = Math.abs(factor - 1) > 1e-6;
 
   const scaledIngredients = useMemo(
     () =>
       ingredients.map((ing) => {
-        const scaledQuantity = ing.quantity ? scaleQuantity(ing.quantity, factor) : "";
+        const canScale = ing.quantityNumeric != null;
+        if (!canScale) {
+          return {
+            ...ing,
+            displayQuantity: ing.quantity ?? "",
+            displayUnit: ing.unit ?? "",
+            unscaled: scaled && !!ing.quantity,
+          };
+        }
+        // Multiply the parsed-once numeric and re-render. We
+        // deliberately don't try to preserve "1-2" range round-trip
+        // here: ranges store midpoint in quantityNumeric, so a
+        // scaled-output of "1-2" × 2 is rendered as a single glyph
+        // (the midpoint × 2), not a range. The author-facing wording
+        // for ranges is captured in the original `quantity` text and
+        // is visible un-scaled at factor=1.
+        const displayQuantity =
+          factor === 1 && ing.quantity
+            ? // Preserve the author's wording at base servings —
+              // "1½", "1 1/2", and "1-2" all stay exactly as typed
+              // until the user starts scaling.
+              ing.quantity
+            : formatQuantity(ing.quantityNumeric! * factor);
         return {
           ...ing,
-          scaledQuantity,
-          scaledUnit: pluralizeUnit(ing.unit, scaledQuantity || ing.quantity),
+          displayQuantity,
+          displayUnit: pluralizeUnit(ing.unit, displayQuantity),
+          unscaled: false,
         };
       }),
-    [ingredients, factor],
+    [ingredients, factor, scaled],
   );
 
   return (
@@ -81,30 +132,40 @@ export function RecipeBody({ ingredients, steps, servings }: Props) {
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-display text-xl font-semibold">Ingredients</h2>
-              {baseServings != null && target != null && (
-                <ServingsControl
-                  base={baseServings}
-                  value={target}
-                  onChange={setTarget}
-                />
-              )}
+              <ServingsControl
+                mode={mode}
+                base={base}
+                value={target}
+                originalText={servings}
+                onChange={setTarget}
+              />
             </div>
 
             <ul className="mt-3 space-y-2">
               {scaledIngredients.map((ing) => {
                 const prefix = formatIngredientPrefix(
-                  ing.scaledQuantity || ing.quantity,
-                  ing.scaledUnit || ing.unit,
+                  ing.displayQuantity,
+                  ing.displayUnit,
                   ing.name,
                 );
                 return (
                   <li key={ing.id} className="flex gap-3 text-sm">
-                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary/60" />
-                    <span>
+                    <span
+                      className={cn(
+                        "mt-2 size-1.5 shrink-0 rounded-full",
+                        ing.unscaled ? "bg-muted-foreground/40" : "bg-primary/60",
+                      )}
+                    />
+                    <span className={cn(ing.unscaled && "text-muted-foreground")}>
                       {prefix && <>{prefix} </>}
-                      <span className="font-medium">{ing.name}</span>
+                      <span className="font-medium text-foreground">
+                        {ing.name}
+                      </span>
                       {ing.note && (
                         <span className="text-muted-foreground">, {ing.note}</span>
+                      )}
+                      {ing.unscaled && (
+                        <UnscaledBadge originalQuantity={ing.quantity} />
                       )}
                     </span>
                   </li>
@@ -148,72 +209,4 @@ export function RecipeBody({ ingredients, steps, servings }: Props) {
       )}
     </>
   );
-}
-
-function ServingsControl({
-  base,
-  value,
-  onChange,
-}: {
-  base: number;
-  value: number;
-  onChange: (next: number) => void;
-}) {
-  const dec = () => onChange(Math.max(1, Math.round(value) - 1));
-  const inc = () => onChange(Math.min(99, Math.round(value) + 1));
-  const isModified = Math.abs(value - base) > 1e-6;
-
-  const display = prettyServings(value);
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-xs text-muted-foreground" aria-hidden>
-        Servings
-      </span>
-      <div
-        className="inline-flex items-center overflow-hidden rounded-full border border-border"
-        role="group"
-        aria-label={`Servings: ${display}`}
-      >
-        <button
-          type="button"
-          onClick={dec}
-          aria-label="Fewer servings"
-          className="flex size-8 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <Minus className="size-3.5" />
-        </button>
-        <span
-          className="min-w-8 px-1 text-center font-semibold tabular-nums"
-          aria-hidden
-        >
-          {display}
-        </span>
-        <button
-          type="button"
-          onClick={inc}
-          aria-label="More servings"
-          className="flex size-8 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-      {isModified && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onChange(base)}
-          className="h-7 gap-1 px-2 text-xs"
-        >
-          <RotateCcw className="size-3" />
-          Reset
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function prettyServings(n: number): string {
-  if (Number.isInteger(n)) return String(n);
-  return n.toFixed(1).replace(/\.0$/, "");
 }

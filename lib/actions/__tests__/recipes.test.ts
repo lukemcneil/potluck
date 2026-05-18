@@ -146,6 +146,75 @@ describe("createRecipeAction", () => {
     expect(mockRevalidatePath).toHaveBeenCalledWith("/u/luke");
   });
 
+  it("persists parsed-numeric companions for servings and ingredient quantities", async () => {
+    // The detail page's scaling stepper and the shopping-list
+    // consolidator both read these columns directly. If a write
+    // somewhere forgets to call deriveNumeric, the recipe stops
+    // being scalable AND silently dedupes wrong in shopping lists,
+    // so it's worth pinning the contract.
+    const user = seedUser(testDb, { handle: "lara" });
+    signInAs(user);
+
+    const payload = makeRecipePayload({
+      title: "Sourdough",
+      servings: "12",
+      ingredients: [
+        // Plain integer.
+        { quantity: "3", unit: "cups", name: "flour", note: null },
+        // ASCII fraction.
+        { quantity: "1/2", unit: "tsp", name: "salt", note: null },
+        // Unicode glyph (½).
+        { quantity: "\u00BD", unit: "tsp", name: "yeast", note: null },
+        // Non-numeric — stays null. UI flags it with "won't scale".
+        { quantity: "a pinch", unit: "", name: "sugar", note: null },
+        // Empty: also null.
+        { quantity: "", unit: "", name: "love", note: null },
+      ],
+    });
+
+    await expect(
+      createRecipeAction({}, makeFormData(payload)),
+    ).rejects.toThrow(/^NEXT_REDIRECT/);
+
+    const recipe = testDb.select().from(schema.recipes).get();
+    expect(recipe?.servings).toBe("12");
+    expect(recipe?.servingsNumeric).toBe(12);
+
+    const ingredients = testDb
+      .select()
+      .from(schema.recipeIngredients)
+      .orderBy(schema.recipeIngredients.position)
+      .all();
+    expect(ingredients.map((i) => i.quantityNumeric)).toEqual([
+      3,
+      0.5,
+      0.5,
+      null,
+      null,
+    ]);
+  });
+
+  it("stores servingsNumeric as null for non-numeric yields like '1 loaf'", async () => {
+    // This is the test case that proves the multiplier-stepper
+    // path in RecipeBody actually fires: when servingsNumeric is
+    // null we render "Scale: 1×" instead of "Servings: 1".
+    const user = seedUser(testDb);
+    signInAs(user);
+
+    const payload = makeRecipePayload({
+      title: "Country Loaf",
+      servings: "1 loaf",
+    });
+
+    await expect(
+      createRecipeAction({}, makeFormData(payload)),
+    ).rejects.toThrow(/^NEXT_REDIRECT/);
+
+    const recipe = testDb.select().from(schema.recipes).get();
+    expect(recipe?.servings).toBe("1 loaf");
+    expect(recipe?.servingsNumeric).toBeNull();
+  });
+
   it("makes the slug unique per author when the title collides", async () => {
     const user = seedUser(testDb, { handle: "alex" });
     signInAs(user);

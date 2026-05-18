@@ -8,16 +8,18 @@ import {
   X,
   Check,
   Lightbulb,
-  Minus,
-  Plus,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
+  ServingsControl,
+  deriveScalingMode,
+} from "@/components/recipe/ServingsControl";
+import { UnscaledBadge } from "@/components/recipe/UnscaledBadge";
+import {
   formatIngredientPrefix,
-  parseQuantity,
+  formatQuantity,
   pluralizeUnit,
-  scaleQuantity,
   scaleStepText,
 } from "@/lib/cooking/scale";
 import { cn } from "@/lib/utils";
@@ -25,6 +27,13 @@ import { cn } from "@/lib/utils";
 type Ingredient = {
   id: string;
   quantity: string | null;
+  /**
+   * Parsed-numeric companion (`deriveNumeric(quantity)` at write
+   * time). Cook mode shows the "won't scale" badge for rows where
+   * this is null and the user has rescaled — same UX as the detail
+   * page, see RecipeBody for the longer rationale.
+   */
+  quantityNumeric: number | null;
   unit: string | null;
   name: string;
   note: string | null;
@@ -36,6 +45,8 @@ type Recipe = {
   id: string;
   title: string;
   servings: string | null;
+  /** Parsed-numeric servings companion; null → multiplier stepper. */
+  servingsNumeric: number | null;
   prepMinutes: number | null;
   cookMinutes: number | null;
 };
@@ -57,31 +68,41 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
   const [doneIngredients, setDoneIngredients] = useState<Set<string>>(new Set());
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
-  // Servings scaler — same logic as the detail page's RecipeBody.
-  const baseServings = useMemo(() => {
-    const parsed = parseQuantity(recipe.servings ?? null);
-    if (!parsed) return null;
-    if (parsed.kind === "single" && parsed.value > 0) return parsed.value;
-    if (parsed.kind === "range" && parsed.low > 0) return parsed.low;
-    return null;
-  }, [recipe.servings]);
-  const [target, setTarget] = useState<number | null>(baseServings);
-  const factor =
-    baseServings != null && target != null && target > 0
-      ? target / baseServings
-      : 1;
+  // Servings scaler — uses the same numeric-companion machinery as
+  // RecipeBody. See lib/cooking/numerics.ts and the schema notes on
+  // recipes.servingsNumeric / recipeIngredients.quantityNumeric.
+  const { mode, base } = deriveScalingMode(recipe.servingsNumeric ?? null);
+  const [target, setTarget] = useState<number>(base);
+  const factor = target > 0 ? target / base : 1;
+  const scaled = Math.abs(factor - 1) > 1e-6;
 
   const scaledIngredients = useMemo(
     () =>
       ingredients.map((ing) => {
-        const scaledQuantity = ing.quantity ? scaleQuantity(ing.quantity, factor) : "";
+        const canScale = ing.quantityNumeric != null;
+        if (!canScale) {
+          return {
+            ...ing,
+            displayQuantity: ing.quantity ?? "",
+            displayUnit: ing.unit ?? "",
+            unscaled: scaled && !!ing.quantity,
+          };
+        }
+        // At base servings we preserve the author's wording exactly
+        // (so "1½" stays "1½", not snapped to "1 ½"). Once the user
+        // starts scaling, we hand off to the unified formatter.
+        const displayQuantity =
+          factor === 1 && ing.quantity
+            ? ing.quantity
+            : formatQuantity(ing.quantityNumeric! * factor);
         return {
           ...ing,
-          scaledQuantity,
-          scaledUnit: pluralizeUnit(ing.unit, scaledQuantity || ing.quantity),
+          displayQuantity,
+          displayUnit: pluralizeUnit(ing.unit, displayQuantity),
+          unscaled: false,
         };
       }),
-    [ingredients, factor],
+    [ingredients, factor, scaled],
   );
 
   // Screen wake lock — best-effort.
@@ -197,9 +218,13 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          {baseServings != null && target != null && (
-            <ServingsControl base={baseServings} value={target} onChange={setTarget} />
-          )}
+          <ServingsControl
+            mode={mode}
+            base={base}
+            value={target}
+            originalText={recipe.servings}
+            onChange={setTarget}
+          />
           <Button
             render={<Link href={`/r/${recipe.id}`} />}
             variant="ghost"
@@ -237,8 +262,8 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                 {scaledIngredients.map((ing) => {
                   const checked = doneIngredients.has(ing.id);
                   const prefix = formatIngredientPrefix(
-                    ing.scaledQuantity || ing.quantity,
-                    ing.scaledUnit || ing.unit,
+                    ing.displayQuantity,
+                    ing.displayUnit,
                     ing.name,
                   );
                   return (
@@ -266,11 +291,16 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
                         >
                           {checked && <Check className="size-3" />}
                         </span>
-                        <span>
+                        <span className={cn(ing.unscaled && "text-muted-foreground")}>
                           {prefix && <>{prefix} </>}
-                          <span className="font-medium">{ing.name}</span>
+                          <span className="font-medium text-foreground">
+                            {ing.name}
+                          </span>
                           {ing.note && (
                             <span className="text-muted-foreground">, {ing.note}</span>
+                          )}
+                          {ing.unscaled && (
+                            <UnscaledBadge originalQuantity={ing.quantity} />
                           )}
                         </span>
                       </button>
@@ -371,45 +401,3 @@ export function CookMode({ recipe, ingredients, steps }: Props) {
   );
 }
 
-function ServingsControl({
-  base,
-  value,
-  onChange,
-}: {
-  base: number;
-  value: number;
-  onChange: (next: number) => void;
-}) {
-  void base;
-  const display = Number.isInteger(value) ? value : value.toFixed(1);
-  return (
-    <div
-      className="inline-flex items-center overflow-hidden rounded-full border border-border text-sm"
-      role="group"
-      aria-label={`Servings: ${display}`}
-    >
-      <button
-        type="button"
-        onClick={() => onChange(Math.max(1, Math.round(value) - 1))}
-        aria-label="Fewer servings"
-        className="flex size-8 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <Minus className="size-3.5" />
-      </button>
-      <span
-        className="min-w-10 px-1 text-center font-semibold tabular-nums"
-        aria-hidden
-      >
-        {display}
-      </span>
-      <button
-        type="button"
-        onClick={() => onChange(Math.min(99, Math.round(value) + 1))}
-        aria-label="More servings"
-        className="flex size-8 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
-      >
-        <Plus className="size-3.5" />
-      </button>
-    </div>
-  );
-}
