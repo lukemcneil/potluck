@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -67,6 +67,16 @@ type Props =
       initial?: Partial<RecipeFormInput>;
       initialPhotos?: UploadedPhoto[];
       verification?: RecipeFormVerification | null;
+      /**
+       * When true, install a `beforeunload` listener so closing the
+       * tab / reloading / hitting the browser back button asks
+       * "Leave site? Changes you made may not be saved." Suspended
+       * automatically while the form is mid-submit so the redirect
+       * to /r/[id] after a successful save doesn't trigger it. Use
+       * this on the AI-import path where the user often thinks the
+       * extraction step IS the save step and walks away too early.
+       */
+      warnBeforeLeave?: boolean;
     }
   | {
       mode: "edit";
@@ -74,6 +84,7 @@ type Props =
       initial?: Partial<RecipeFormInput>;
       initialPhotos?: UploadedPhoto[];
       verification?: RecipeFormVerification | null;
+      warnBeforeLeave?: boolean;
     };
 
 const DEFAULTS: RecipeFormInput = {
@@ -100,11 +111,44 @@ export function RecipeForm(props: Props) {
   const initial = props.initial;
   const initialPhotos = props.initialPhotos ?? [];
   const verification = props.verification ?? null;
+  const warnBeforeLeave = props.warnBeforeLeave ?? false;
 
   const [photos, setPhotos] = useState<UploadedPhoto[]>(initialPhotos);
   const [tagInput, setTagInput] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  /*
+   * Browser-level "are you sure you want to leave?" guard. We only
+   * install it when warnBeforeLeave is on (the AI-import flow opts in;
+   * /r/[id]/edit doesn't because the original is already saved).
+   *
+   * Browsers ignore custom messages now — they show their own
+   * generic "Leave site? Changes you may not be saved." prompt. That
+   * generic prompt is exactly what we want: it interrupts the back
+   * gesture / tab close / pull-to-refresh that the user's mom used
+   * to abandon the import without realising she hadn't saved.
+   *
+   * Suspended while the form is mid-submit via the isPendingRef so
+   * the server action's redirect to /r/[id] after a successful save
+   * doesn't trip the warning. The ref pattern is needed because
+   * `beforeunload` handlers are installed once and need to see the
+   * current submitting state without re-binding on every render.
+   */
+  const isPendingRef = useRef(false);
+  isPendingRef.current = isPending;
+  useEffect(() => {
+    if (!warnBeforeLeave) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      if (isPendingRef.current) return;
+      event.preventDefault();
+      // Required by older Chromium / Safari to actually show the
+      // confirmation. Modern browsers ignore the value itself.
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [warnBeforeLeave]);
 
   const form = useForm<RecipeFormInput, unknown, RecipeFormOutput>({
     resolver: zodResolver(recipeFormSchema),
@@ -754,12 +798,34 @@ export function RecipeForm(props: Props) {
       */}
       <div
         className={cn(
-          "sticky bottom-20 z-10 -mx-4 flex justify-end gap-2 bg-background px-4 py-3",
+          "sticky bottom-20 z-10 -mx-4 flex items-center justify-between gap-2 bg-background px-4 py-3",
           "shadow-[0_-12px_24px_-16px_rgb(0_0_0/0.18)]",
           "before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t before:from-background before:to-transparent",
           "sm:bottom-0 sm:-mx-6 sm:px-6",
         )}
       >
+        {/*
+          Left-side urgency badge for AI-imported recipes. The banner
+          at the top of the page is the loud version; this is the
+          quiet reinforcement at the save button itself in case the
+          user scrolled straight to the bottom without reading. We
+          hide it entirely once a submit is in flight so the
+          "Saving…" state isn't accompanied by "Not saved yet".
+        */}
+        {warnBeforeLeave && !isPending ? (
+          <span
+            aria-hidden
+            className="flex items-center gap-1.5 text-xs font-medium text-primary"
+          >
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+              <span className="relative inline-flex size-2 rounded-full bg-primary" />
+            </span>
+            Not saved yet
+          </span>
+        ) : (
+          <span />
+        )}
         <Button
           type="submit"
           size="lg"

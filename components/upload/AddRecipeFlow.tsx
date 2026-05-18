@@ -7,10 +7,12 @@ import {
   Link as LinkIcon,
   Pencil,
   ArrowLeft,
+  ArrowDown,
   Sparkles,
   Loader2,
   AlertTriangle,
   Clipboard,
+  CheckCircle2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -480,19 +482,43 @@ export function AddRecipeFlow({
   }
 
   // stage.kind === "form"
+  const isPrefilled = !!stage.prefill;
+  /*
+   * The user's mom imported a recipe, the form filled in for her,
+   * and she hit the browser back button because she thought the
+   * extraction step WAS the save step. The recipe was thrown away
+   * silently. So when we're on the form stage of an AI-import flow
+   * (i.e. prefill is present), confirm before letting the user
+   * abandon the in-page back button. The RecipeForm separately
+   * installs a `beforeunload` listener to catch the browser back
+   * button / tab close / pull-to-refresh below.
+   */
+  const handleBackFromForm = () => {
+    if (
+      isPrefilled &&
+      !window.confirm(
+        "Discard this imported recipe? You haven't saved it yet, and going back will throw away what we extracted.",
+      )
+    ) {
+      return;
+    }
+    setStage({ kind: "choose" });
+  };
+
   return (
     <div>
-      <BackButton onClick={() => setStage({ kind: "choose" })} />
+      <BackButton onClick={handleBackFromForm} />
       <h1 className="font-display text-2xl font-semibold tracking-tight">
-        Review &amp; save
+        {isPrefilled ? "Almost done — review and save" : "Add a recipe"}
       </h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        {stage.prefill
-          ? "We filled this in for you. Tweak anything that's off, then save."
+        {isPrefilled
+          ? "We extracted this for you. Look it over, fix anything off, then tap Save at the bottom to add it to your cookbook."
           : "Fill in your recipe."}
       </p>
+      {isPrefilled && <ImportSuccessBanner />}
       {stage.cost && (
-        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
+        <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground">
           <span aria-hidden>{"\u2728"}</span>
           AI extraction cost: {formatExtractionCost(stage.cost.totalUsd)}{" "}
           <span className="text-muted-foreground/60">
@@ -512,7 +538,45 @@ export function AddRecipeFlow({
               : { sourceUrl: stage.sourceUrl ?? null } as never
           }
           verification={stage.verification ?? null}
+          warnBeforeLeave={isPrefilled}
         />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Loud, hard-to-miss banner shown above the import-prefilled recipe
+ * form. The user's mom would tap Magic Snap, see the extracted
+ * recipe, and walk away — she thought she was done at that point.
+ * This banner is the answer: bright primary tint, explicit "you
+ * still need to save", and a literal arrow pointing down at the
+ * Save button. It's not graceful, and that's the point.
+ */
+function ImportSuccessBanner() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mt-4 flex items-start gap-3 rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm shadow-sm"
+    >
+      <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+      <div className="flex-1">
+        <p className="font-semibold text-foreground">
+          Recipe extracted — one more step!
+        </p>
+        <p className="mt-1 text-foreground/80">
+          Scroll through to make sure everything looks right, then tap{" "}
+          <span className="inline-flex items-center gap-1 rounded-md bg-primary/20 px-1.5 py-0.5 font-medium text-primary">
+            Save recipe
+          </span>{" "}
+          at the bottom. <strong>Nothing is saved yet</strong> — if you leave
+          this page now you&apos;ll lose the import.
+        </p>
+        <p className="mt-2 inline-flex items-center gap-1 text-xs text-primary/80">
+          <ArrowDown className="size-3.5 animate-bounce" aria-hidden />
+          Save button is at the bottom of the form
+        </p>
       </div>
     </div>
   );
