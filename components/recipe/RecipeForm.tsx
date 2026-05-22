@@ -133,10 +133,20 @@ export function RecipeForm(props: Props) {
    * the server action's redirect to /r/[id] after a successful save
    * doesn't trip the warning. The ref pattern is needed because
    * `beforeunload` handlers are installed once and need to see the
-   * current submitting state without re-binding on every render.
+   * current submitting state without re-binding on every render —
+   * the alternative (depending on isPending in the handler effect)
+   * would re-attach/detach the window listener on every isPending
+   * flip, which churns and can race with the unload event.
+   *
+   * The ref is mirrored via a post-render effect (not assigned
+   * during render) because React 19's react-hooks lint flags ref
+   * writes during render — effects run after commit, so by the time
+   * `beforeunload` fires (any user input) the ref is current.
    */
   const isPendingRef = useRef(false);
-  isPendingRef.current = isPending;
+  useEffect(() => {
+    isPendingRef.current = isPending;
+  });
   useEffect(() => {
     if (!warnBeforeLeave) return;
     const handler = (event: BeforeUnloadEvent) => {
@@ -174,15 +184,18 @@ export function RecipeForm(props: Props) {
   // === Review state =====================================================
   // The verification payload's flag arrays are POSITIONAL, but RHF can
   // reorder/insert/remove rows. We re-key the maps by the stable
-  // `field.id` on the FIRST render, then track resolution by id from
-  // there. Mutating refs during render is the official lazy-init
-  // pattern (see React's `useRef` docs) — this runs exactly once per
-  // mount because we guard on `flagsByIdRef.current`.
-  const flagsByIdRef = useRef<{
+  // `field.id` ONCE on mount, then track resolution by id from there.
+  // `useState`'s lazy initializer runs exactly once and sees the
+  // already-populated `ingredients.fields` / `steps.fields` because
+  // it's called AFTER both `useFieldArray` hooks above. We don't
+  // depend on `verification` changing post-mount — it's set by the
+  // review-payload builder at form construction and is immutable for
+  // the lifetime of this form, so capturing once is correct.
+  const [flagsById] = useState<{
     ingredient: Map<string, IngredientFlag>;
     step: Map<string, StepFlag>;
-  } | null>(null);
-  if (verification && flagsByIdRef.current == null) {
+  } | null>(() => {
+    if (!verification) return null;
     const ingMap = new Map<string, IngredientFlag>();
     ingredients.fields.forEach((f, i) => {
       const flag = verification.ingredientFlags[i];
@@ -193,8 +206,8 @@ export function RecipeForm(props: Props) {
       const flag = verification.stepFlags[i];
       if (flag) stepMap.set(f.id, flag);
     });
-    flagsByIdRef.current = { ingredient: ingMap, step: stepMap };
-  }
+    return { ingredient: ingMap, step: stepMap };
+  });
 
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const markResolved = (id: string) => {
@@ -207,9 +220,9 @@ export function RecipeForm(props: Props) {
   };
 
   const ingredientFlagFor = (rowId: string): IngredientFlag | undefined =>
-    flagsByIdRef.current?.ingredient.get(rowId);
+    flagsById?.ingredient.get(rowId);
   const stepFlagFor = (rowId: string): StepFlag | undefined =>
-    flagsByIdRef.current?.step.get(rowId);
+    flagsById?.step.get(rowId);
 
   const ingredientUnresolved = (rowId: string): boolean => {
     if (resolvedIds.has(rowId)) return false;

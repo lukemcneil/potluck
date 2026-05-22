@@ -59,15 +59,28 @@ export function PhotoLightbox({
 }: Props) {
   const [index, setIndex] = useState(initialIndex);
   const [actualSize, setActualSize] = useState(false);
-
-  // Re-anchor to whichever photo the user actually tapped, and reset
-  // back to fit-to-viewport so each new image starts at a sane size.
-  useEffect(() => {
+  // React's blessed "reset state on prop change" pattern: track the
+  // previous values of the props that should trigger a reset and
+  // adjust state during render when they change. This is preferred
+  // over an effect with `setState` inside (which the react-hooks/
+  // set-state-in-effect rule flags as it causes cascading renders
+  // and an unnecessary commit pass). The setState calls below run
+  // during render but React batches them into the same render pass.
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [prevOpen, setPrevOpen] = useState(open);
+  const [prevInitialIndex, setPrevInitialIndex] = useState(initialIndex);
+  if (open !== prevOpen || initialIndex !== prevInitialIndex) {
+    setPrevOpen(open);
+    setPrevInitialIndex(initialIndex);
+    // Re-anchor to whichever photo the user actually tapped, and
+    // reset back to fit-to-viewport so each new image starts at a
+    // sane size. Skip the reset when the lightbox is closing — keeps
+    // the close animation from flashing back to the initial photo.
     if (open) {
       setIndex(initialIndex);
       setActualSize(false);
     }
-  }, [open, initialIndex]);
+  }
 
   // Arrow-key navigation. Bound to the document only while open so
   // we don't fight other keyboard handlers on the underlying page.
