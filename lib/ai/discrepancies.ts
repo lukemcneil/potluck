@@ -113,6 +113,232 @@ function normalizeShort(s: string | null | undefined): string {
 }
 
 /**
+ * Normalize for source-text substring matching. Lowercases, swaps
+ * Unicode fraction glyphs to their ASCII forms (so "½ teaspoon" in the
+ * source matches an auditor quoting "1/2 teaspoon", and vice versa),
+ * strips most punctuation EXCEPT `/` (we need it for fractions), and
+ * collapses whitespace.
+ *
+ * Used by the source-grounding filter in `issuesToDiscrepancies` —
+ * gentler than `normalizeName` (which strips `/` and would mangle
+ * fractions) and stricter than `normalizeShort` (no fraction handling).
+ */
+export function normalizeForSourceSearch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/½/g, "1/2")
+    .replace(/¼/g, "1/4")
+    .replace(/¾/g, "3/4")
+    .replace(/⅓/g, "1/3")
+    .replace(/⅔/g, "2/3")
+    .replace(/⅛/g, "1/8")
+    .replace(/⅜/g, "3/8")
+    .replace(/⅝/g, "5/8")
+    .replace(/⅞/g, "7/8")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9/.\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Bidirectional substring check on normalized phrases. Returns true
+ * when `claim` ⊂ `actual` OR `actual` ⊂ `claim` — the auditor might
+ * quote a partial value (just the quantity) or a paraphrase that
+ * extends what the primary said. Either direction is evidence the
+ * auditor was reading the same row.
+ *
+ * Lenient by design: empty inputs return true (we can't disprove the
+ * match, so we keep the issue).
+ */
+function loosePhraseMatch(claim: string, actual: string): boolean {
+  const c = normalizeName(claim);
+  const a = normalizeName(actual);
+  if (!c || !a) return true;
+  return c.includes(a) || a.includes(c);
+}
+
+/**
+ * Render an ingredient as "qty unit name" for primary-reading matches.
+ * Mirrors `formatIngredient` but lives here so the filter doesn't have
+ * to reach into the legacy diff pipeline's helpers.
+ */
+function formatIngredientForMatch(ing: NormalizedIngredient): string {
+  return [ing.quantity, ing.unit, ing.name]
+    .filter((p): p is string => !!p && p.trim() !== "")
+    .join(" ");
+}
+
+/**
+ * Pick a substantive contiguous phrase (the first `minWords` words of
+ * 2+ characters each) from a normalized step / corrected-text claim.
+ * Used by the source-grounding filter to check that step-text issues
+ * actually quote the source. Returns "" when the input is shorter than
+ * the threshold — caller treats "" as "skip the check" (lenient).
+ */
+function significantPhrase(text: string, minWords: number): string {
+  const words = normalizeName(text)
+    .split(" ")
+    .filter((w) => w.length >= 2);
+  if (words.length < minWords) return "";
+  return words.slice(0, minWords).join(" ");
+}
+
+/**
+ * Filter A + Filter B for ingredient issues. Returns false to silently
+ * drop the issue before translation. The two filter classes:
+ *
+ *   A. Primary-side grounding: when the auditor references an existing
+ *      row (kind ≠ "missing") and supplies a `primaryReading`, that
+ *      reading must loosely substring-match the primary row. Catches
+ *      "auditor lied about what primary said" — the most common
+ *      lite-class verifier failure mode.
+ *
+ *   B. Source-side grounding: when the auditor proposes a correction
+ *      (`correctedQuantity` / `correctedUnit` / `correctedName`), the
+ *      claim must appear in the source content. Catches "auditor
+ *      invented a source value." Skipped when `sourceText` is empty
+ *      (image-only extractions, where the source isn't a substring
+ *      corpus we can search).
+ *
+ *   A2. "Missing" issues whose proposed ingredient already exists in
+ *      the primary — the auditor invented a missing thing that's
+ *      already there. Dropped.
+ *
+ * Lenient defaults: when a field is null/empty, or the claim is too
+ * short to safely match, or there's nothing to compare against, the
+ * issue is KEPT. We're trying to filter audit hallucinations without
+ * suppressing real catches.
+ */
+function shouldEmitIngredientIssue(
+  issue: IngredientIssue,
+  primary: ExtractedRecipe,
+  sourceText: string,
+): boolean {
+  if (issue.kind === "missing") {
+    // Filter A2: corrected name exactly matches an existing primary
+    // ingredient — the auditor invented a "missing" that's already
+    // there. We use normalized EQUALITY here rather than substring
+    // because substring is too aggressive ("salt" ⊂ "sea salt for
+    // finishing" — but those are genuinely different ingredients and
+    // dropping the issue would suppress a real catch). The redundant
+    // strip the user sees when the audit suggests a name variant of
+    // an existing ingredient is a much lower cost than losing a real
+    // missing-ingredient flag.
+    if (issue.correctedName) {
+      const nameNorm = normalizeName(issue.correctedName);
+      if (nameNorm) {
+        const alreadyThere = primary.ingredients.some(
+          (ing) => normalizeName(ing.name) === nameNorm,
+        );
+        if (alreadyThere) return false;
+      }
+    }
+
+    // Filter B: corrected name appears in source. Skip when source is
+    // empty (image inputs) or the name is too short to safely match
+    // (e.g. "egg" — would always trivially match).
+    if (sourceText && issue.correctedName) {
+      const claim = normalizeForSourceSearch(issue.correctedName);
+      const src = normalizeForSourceSearch(sourceText);
+      if (claim.length >= 3 && !src.includes(claim)) return false;
+    }
+
+    return true;
+  }
+
+  // Existing-row issues (wrong_*, should_be_removed):
+
+  // Filter A — primaryReading vs actual primary row.
+  if (issue.primaryIndex != null && issue.primaryReading) {
+    const idx = issue.primaryIndex;
+    if (idx >= 0 && idx < primary.ingredients.length) {
+      const actual = formatIngredientForMatch(primary.ingredients[idx]);
+      if (!loosePhraseMatch(issue.primaryReading, actual)) return false;
+    }
+  }
+
+  // Filter B for wrong_quantity / wrong_unit: the combined "qty unit"
+  // claim must appear verbatim in source. Skipped for wrong_name (too
+  // prone to paraphrase, "scallions" vs "green onions") and for
+  // should_be_removed (no source claim to verify).
+  if (
+    (issue.kind === "wrong_quantity" || issue.kind === "wrong_unit") &&
+    sourceText
+  ) {
+    const qty = (issue.correctedQuantity ?? "").trim();
+    const unit = (issue.correctedUnit ?? "").trim();
+    const combined = `${qty} ${unit}`.trim();
+    if (combined.length >= 2) {
+      const claim = normalizeForSourceSearch(combined);
+      const src = normalizeForSourceSearch(sourceText);
+      if (claim && !src.includes(claim)) return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Filter counterpart for step issues. Same A / A2 / B framework as
+ * `shouldEmitIngredientIssue` above; see that docstring for the design
+ * rationale.
+ *
+ * Step-side grounding is phrase-based rather than full-substring:
+ * recipe steps are long enough that a single contiguous N-word phrase
+ * (N=5 here) appearing in both the corrected text and the source is
+ * strong evidence the auditor was reading the source. We don't require
+ * the entire corrected step to appear verbatim — minor rewording is
+ * legitimate and dropping those would suppress real catches.
+ */
+function shouldEmitStepIssue(
+  issue: StepIssue,
+  primary: ExtractedRecipe,
+  sourceText: string,
+): boolean {
+  if (issue.kind === "missing") {
+    // Filter A2: the supposedly-missing step is already in primary.
+    if (issue.correctedText) {
+      const phrase = significantPhrase(issue.correctedText, 5);
+      if (phrase) {
+        const alreadyThere = primary.steps.some((s) =>
+          normalizeName(s.body).includes(phrase),
+        );
+        if (alreadyThere) return false;
+      }
+    }
+
+    // Filter B: corrected text shares a 5+ word phrase with source.
+    if (sourceText && issue.correctedText) {
+      const phrase = significantPhrase(issue.correctedText, 5);
+      if (phrase && !normalizeName(sourceText).includes(phrase)) return false;
+    }
+
+    return true;
+  }
+
+  // Filter A — primaryReading vs actual step body.
+  if (issue.primaryIndex != null && issue.primaryReading) {
+    const idx = issue.primaryIndex;
+    if (idx >= 0 && idx < primary.steps.length) {
+      if (!loosePhraseMatch(issue.primaryReading, primary.steps[idx].body)) {
+        return false;
+      }
+    }
+  }
+
+  // Filter B for text_wrong: corrected text shares a 5+ word phrase
+  // with source. Skipped for should_be_removed (no source claim).
+  if (issue.kind === "text_wrong" && sourceText && issue.correctedText) {
+    const phrase = significantPhrase(issue.correctedText, 5);
+    if (phrase && !normalizeName(sourceText).includes(phrase)) return false;
+  }
+
+  return true;
+}
+
+/**
  * Translate the sequential verifier's `ExtractionIssues` into the
  * existing `Discrepancy[]` shape that the review UI already speaks.
  *
@@ -125,6 +351,19 @@ function normalizeShort(s: string | null | undefined): string {
  * (out-of-bounds indexes get dropped) so a confused verifier can't
  * crash the importer.
  *
+ * Audit-hallucination filtering: BEFORE translation each issue is run
+ * through Filter A (primary-side: did the auditor mis-quote the
+ * primary?) and Filter B (source-side: does the auditor's correction
+ * actually appear in the source?). See `shouldEmitIngredientIssue` /
+ * `shouldEmitStepIssue` for the full rules; both filters bias toward
+ * KEEPING issues when uncertain. Filters that drop are logged via
+ * `console.log` so we can tune them.
+ *
+ * `sourceText` is the flattened text of the source the auditor saw —
+ * the URL's HTML/JSON-LD blob or the user's pasted text. Pass "" (or
+ * omit it) for image-only extractions; Filter B becomes a no-op in
+ * that case and only primary-side checks run.
+ *
  * Pure function — no I/O, no LLM. The verifier's `reason` strings are
  * surfaced verbatim in the review strips so the model's natural-
  * language explanation reaches the user.
@@ -132,16 +371,33 @@ function normalizeShort(s: string | null | undefined): string {
 export function issuesToDiscrepancies(
   issues: ExtractionIssues,
   primary: ExtractedRecipe,
+  sourceText: string = "",
 ): Discrepancy[] {
   const out: Discrepancy[] = [];
+  let droppedIngredients = 0;
+  let droppedSteps = 0;
 
   for (const issue of issues.ingredientIssues) {
+    if (!shouldEmitIngredientIssue(issue, primary, sourceText)) {
+      droppedIngredients++;
+      continue;
+    }
     const d = ingredientIssueToDiscrepancy(issue, primary);
     if (d) out.push(d);
   }
   for (const issue of issues.stepIssues) {
+    if (!shouldEmitStepIssue(issue, primary, sourceText)) {
+      droppedSteps++;
+      continue;
+    }
     const d = stepIssueToDiscrepancy(issue, primary);
     if (d) out.push(d);
+  }
+
+  if (droppedIngredients > 0 || droppedSteps > 0) {
+    console.log(
+      `[ai.audit.filter] dropped ungrounded issues: ingredients=${droppedIngredients} steps=${droppedSteps} (kept ${out.length})`,
+    );
   }
 
   return out;

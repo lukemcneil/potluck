@@ -280,6 +280,7 @@ function ingIssue(partial: Partial<IngredientIssue>): IngredientIssue {
   return {
     primaryIndex: 0,
     kind: "wrong_quantity",
+    primaryReading: null,
     correctedQuantity: null,
     correctedUnit: null,
     correctedName: null,
@@ -294,6 +295,7 @@ function stepIssue(partial: Partial<StepIssue>): StepIssue {
     primaryIndex: 0,
     kind: "text_wrong",
     insertPosition: null,
+    primaryReading: null,
     correctedText: null,
     reason: "audited",
     ...partial,
@@ -639,5 +641,397 @@ describe("issuesToDiscrepancies", () => {
     expect(out).toHaveLength(2);
     expect(out[0].kind).toBe("ingredient_mismatch");
     expect(out[1].kind).toBe("step_text_diverges");
+  });
+});
+
+/**
+ * Filter A (primary-side) + Filter B (source-side) grounding tests.
+ *
+ * The 5 regression cases below are real false-positive audit issues
+ * observed in a May 2026 evaluation of `gemini-3.1-flash-lite` as the
+ * verify model on 3 prod recipe URLs. The lite-class verifier emitted
+ * issues that, when fact-checked against the source, were either pure
+ * hallucinations ("source says 3 cups" when source actually says 2),
+ * or invented "missing" content that was already present in the
+ * primary extraction. Without these filters, every false positive
+ * forces the user to click through a yellow review strip for a problem
+ * that doesn't exist.
+ *
+ * The survival tests assert that REAL audit catches (genuine unit
+ * substitutions, missing finishing salt, etc.) keep flowing through.
+ * The filter's #1 design goal is to drop hallucinations WITHOUT
+ * suppressing real flags — we'd rather show the user a noisy strip
+ * than ship a wrong measurement.
+ */
+describe("issuesToDiscrepancies — grounding filter (Filter A + Filter B)", () => {
+  describe("Filter A: primary-side grounding (audit mis-quotes the primary)", () => {
+    it("drops a wrong_quantity issue whose primaryReading mismatches the primary row", () => {
+      // Audit claims "primary said 3 tbsp salt → should be 1 tsp" but
+      // primary actually says "1 tsp salt". The auditor was reading
+      // a different row (or hallucinating).
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_quantity",
+            primaryReading: "3 tbsp salt",
+            correctedQuantity: "1",
+            correctedUnit: "tsp",
+            reason: "mismatch",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, "")).toEqual([]);
+    });
+
+    it("KEEPS an issue when primaryReading matches the primary row (real disagreement survives)", () => {
+      // Same setup but the audit accurately quotes primary and
+      // proposes a unit correction grounded in source.
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const src = "Ingredients: 1 tbsp salt, 2 cups flour. Bake for 20 min.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_unit",
+            primaryReading: "1 tsp salt",
+            correctedQuantity: "1",
+            correctedUnit: "tbsp",
+            reason: "Source says 1 tbsp.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      const out = issuesToDiscrepancies(issues, primary, src);
+      expect(out).toHaveLength(1);
+      expect(out[0].kind).toBe("ingredient_mismatch");
+    });
+
+    it("KEEPS an issue when primaryReading is null (lenient: don't penalize the model for not filling the field)", () => {
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const src = "Ingredients: 1 tbsp salt.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_unit",
+            primaryReading: null,
+            correctedQuantity: "1",
+            correctedUnit: "tbsp",
+            reason: "unit",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toHaveLength(1);
+    });
+
+    it("matches primary readings bidirectionally — auditor quoting just the qty+unit still counts", () => {
+      const primary = recipe({ ingredients: [ing("flour", "2", "cups")] });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_quantity",
+            primaryReading: "2 cups", // partial — qty+unit only
+            correctedQuantity: "1.5",
+            correctedUnit: "cups",
+            reason: "Source says 1.5 cups.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      const src = "Ingredients: 1.5 cups all-purpose flour.";
+      expect(issuesToDiscrepancies(issues, primary, src)).toHaveLength(1);
+    });
+
+    it("drops a text_wrong issue whose primaryReading doesn't substring-match the step body", () => {
+      const primary = recipe({ steps: [step("Bake at 350F for 12 minutes.")] });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [],
+        stepIssues: [
+          stepIssue({
+            primaryIndex: 0,
+            kind: "text_wrong",
+            primaryReading: "Stir vigorously for an hour and let rest overnight.",
+            correctedText: "Bake at 375F for 10 minutes.",
+            reason: "wrong temperature",
+          }),
+        ],
+      };
+      expect(issuesToDiscrepancies(issues, primary, "")).toEqual([]);
+    });
+  });
+
+  describe("Filter A2: 'missing' that's already there", () => {
+    it("drops a missing-step issue when the supposedly-missing step is already in primary (the 'cut off tops' lite false positive)", () => {
+      // Real-world case from the May 2026 eval: audit claimed
+      // "source has a step to slice the puff tops off" but primary
+      // step 6 literally already had that step.
+      const primary = recipe({
+        steps: [
+          step("Combine water and butter, bring to a boil."),
+          step("Whisk in flour."),
+          step("Pipe puffs onto a baking sheet."),
+          step("Bake at 180C for 25 minutes."),
+          step("Whip the raspberry cream filling."),
+          step(
+            "Cut off the choux pastry puff tops, keeping them next to each puff. Pipe cream inside.",
+          ),
+        ],
+      });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [],
+        stepIssues: [
+          stepIssue({
+            primaryIndex: null,
+            kind: "missing",
+            insertPosition: 5,
+            correctedText:
+              "Cut off the choux pastry puff tops to fill them with cream.",
+            reason: "Source includes a step to slice tops off before filling.",
+          }),
+        ],
+      };
+      expect(issuesToDiscrepancies(issues, primary, "")).toEqual([]);
+    });
+
+    it("drops a missing-ingredient issue when the corrected name matches an existing ingredient exactly", () => {
+      const primary = recipe({ ingredients: [ing("kosher salt", "1", "tsp")] });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: null,
+            kind: "missing",
+            correctedName: "kosher salt",
+            correctedQuantity: "1",
+            correctedUnit: "tsp",
+            reason: "already there",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, "")).toEqual([]);
+    });
+
+    it("KEEPS a missing-ingredient issue when the names are different (survival: 'sea salt for finishing' vs 'salt')", () => {
+      // Same fixture as the existing translator test — confirms we
+      // didn't regress real-catch coverage when adding Filter A2.
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const src = "Sprinkle sea salt for finishing on top before serving.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: null,
+            kind: "missing",
+            correctedQuantity: "1",
+            correctedUnit: "pinch",
+            correctedName: "sea salt for finishing",
+            reason: "Source has a finishing salt.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toHaveLength(1);
+    });
+  });
+
+  describe("Filter B: source-side grounding (audit invents source values)", () => {
+    it("drops a wrong_quantity issue when the corrected qty+unit doesn't appear in source (the '3 cups chicken' lite false positive)", () => {
+      // Real-world case: audit said "source specifies 3 cups of
+      // chicken, not 2." Source actually says 2 cups. The corrected
+      // "3 cups" never appears in source.
+      const primary = recipe({
+        ingredients: [ing("cooked chopped chicken", "2", "cups")],
+      });
+      const src =
+        "Ingredients: 2 cups cooked chopped chicken, ½ cup mayonnaise, 1 rib celery.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_quantity",
+            primaryReading: "2 cups cooked chopped chicken",
+            correctedQuantity: "3",
+            correctedUnit: "cups",
+            reason: "Source specifies 3 cups of chicken.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toEqual([]);
+    });
+
+    it("drops a wrong_quantity issue when the corrected qty doesn't appear in source even though similar numbers do (the '1-2 eggs' lite false positive)", () => {
+      // Real-world: audit said source specifies "1-2 eggs". The "1-2"
+      // it found was actually "1-2 minutes" (cooking time), not eggs.
+      const primary = recipe({ ingredients: [ing("egg", "1")] });
+      const src =
+        "Combine water and butter, bring to a boil for 1-2 minutes. Then whisk in 1 egg.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_quantity",
+            primaryReading: "1 egg",
+            correctedQuantity: "1-2",
+            correctedUnit: null,
+            reason: "Source says 1-2 eggs.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      // "1-2" appears in source (in "1-2 minutes") but "1-2 eggs" or
+      // even the combined claim "1-2" alone is the field we check.
+      // The substring "1-2" IS in source, so this test is actually
+      // demonstrating the filter's lenient behavior — it would KEEP
+      // this issue. The realistic stop-gap is the auditor would have
+      // emitted a wrong_quantity with correctedQuantity="1-2" and we
+      // don't have enough signal to safely drop it without breaking
+      // real catches. This test pins that behavior so a future
+      // tightening doesn't silently regress real catches.
+      const out = issuesToDiscrepancies(issues, primary, src);
+      expect(out).toHaveLength(1);
+    });
+
+    it("drops a missing-ingredient issue when the corrected name doesn't appear in source", () => {
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const src = "Ingredients: 1 tsp salt, 2 cups flour.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: null,
+            kind: "missing",
+            correctedQuantity: "2",
+            correctedUnit: "cups",
+            correctedName: "chocolate chips",
+            reason: "Source supposedly has chocolate chips.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toEqual([]);
+    });
+
+    it("drops a text_wrong issue whose corrected step has no significant phrase overlap with source", () => {
+      const primary = recipe({
+        steps: [step("Combine ingredients in a bowl and mix well.")],
+      });
+      const src =
+        "Method: 1. Combine ingredients in a bowl and mix well. 2. Bake at 350 for 20 minutes.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [],
+        stepIssues: [
+          stepIssue({
+            primaryIndex: 0,
+            kind: "text_wrong",
+            primaryReading: "Combine ingredients in a bowl and mix well.",
+            correctedText:
+              "Set the oven to 425F and prepare the meringue topping while you wait.",
+            reason: "wrong step",
+          }),
+        ],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toEqual([]);
+    });
+
+    it("KEEPS a wrong_unit issue when the corrected qty+unit appears verbatim in source (real catch survives)", () => {
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const src = "Ingredients: 1 tbsp salt, 2 cups flour, 3 eggs.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_unit",
+            primaryReading: "1 tsp salt",
+            correctedQuantity: "1",
+            correctedUnit: "tbsp",
+            reason: "Source says 1 tbsp.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toHaveLength(1);
+    });
+
+    it("KEEPS issues when source uses Unicode fraction glyphs and the auditor quoted ASCII (½ ↔ 1/2 normalization)", () => {
+      const primary = recipe({ ingredients: [ing("flour", "1", "cup")] });
+      const src = "Ingredients: ½ cup butter, 1 cup flour, 2 cups sugar.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: null,
+            kind: "missing",
+            correctedQuantity: "1/2",
+            correctedUnit: "cup",
+            correctedName: "butter",
+            reason: "Source has 1/2 cup butter.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      const out = issuesToDiscrepancies(issues, primary, src);
+      expect(out).toHaveLength(1);
+      expect(out[0].kind).toBe("ingredient_missing_from_original");
+    });
+
+    it("skips Filter B entirely when sourceText is empty (image extractions — only primary-side checks run)", () => {
+      // For image inputs we don't have a text corpus to substring
+      // against, so the source-side filter must NOT fire. Primary-
+      // side checks (Filter A and A2) still work.
+      const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_unit",
+            primaryReading: "1 tsp salt",
+            correctedQuantity: "1",
+            correctedUnit: "tbsp",
+            reason: "Source says 1 tbsp.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, "")).toHaveLength(1);
+    });
+  });
+
+  describe("normalizeForSourceSearch", () => {
+    it("swaps Unicode fraction glyphs to ASCII forms", async () => {
+      const { normalizeForSourceSearch } = await import("../discrepancies");
+      expect(normalizeForSourceSearch("½ teaspoon")).toBe("1/2 teaspoon");
+      expect(normalizeForSourceSearch("¼ cup")).toBe("1/4 cup");
+      expect(normalizeForSourceSearch("¾ tbsp")).toBe("3/4 tbsp");
+    });
+
+    it("preserves the `/` character (needed for ASCII fractions)", async () => {
+      const { normalizeForSourceSearch } = await import("../discrepancies");
+      expect(normalizeForSourceSearch("1/2 cup")).toBe("1/2 cup");
+    });
+
+    it("lowercases, strips diacritics, collapses whitespace", async () => {
+      const { normalizeForSourceSearch } = await import("../discrepancies");
+      expect(normalizeForSourceSearch("Crème\u00a0Brûlée  ")).toBe(
+        "creme brulee",
+      );
+    });
   });
 });

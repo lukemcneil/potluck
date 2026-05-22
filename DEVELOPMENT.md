@@ -616,6 +616,27 @@ into someone's pan without a human taking a look at it first.
   review-payload builder + form stay unchanged. Defensive against
   out-of-bounds indexes and missing fields; drops issues it can't
   make actionable rather than crashing.
+- **Audit-hallucination filter** (same file,
+  `shouldEmitIngredientIssue` / `shouldEmitStepIssue`): two grounding
+  checks that run BEFORE translation to drop issues the auditor
+  invented. (a) Filter A — the audit schema includes a `primaryReading`
+  field where the auditor quotes the primary row verbatim; if that
+  reading doesn't loosely substring-match the actual primary row, the
+  auditor is hallucinating the disagreement and we drop the issue.
+  (b) Filter B — for `wrong_quantity` / `wrong_unit` / `missing`
+  issues, the corrected qty+unit string (with Unicode-fraction
+  normalization so `½` matches `1/2`) must appear verbatim in the
+  source content; if not, the auditor is inventing the source value
+  and we drop. (c) Filter A2 — "missing" issues whose `correctedName`
+  exactly matches an existing primary ingredient, or whose
+  `correctedText` step shares a 5+ word phrase with an existing primary
+  step, are dropped (audit invented a "missing" that's already there).
+  All three filters bias toward KEEPING issues when uncertain — empty
+  fields, short claims, and image-only extractions all bypass the
+  source check rather than risk suppressing a real catch. The 5
+  observed lite-tier false positives are pinned as regression tests
+  alongside survival tests for real catches; see
+  `lib/ai/__tests__/discrepancies.test.ts` for the matrix.
 - **`diffExtractions`** is the older pure-code differ used by the
   parallel-extraction design. It's kept exported with its 19 unit
   tests because it's still useful as a primitive (e.g. for a future

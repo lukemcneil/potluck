@@ -199,6 +199,32 @@
   on `issuesToDiscrepancies` (the sequential-audit translator), all
   in `lib/ai/__tests__/discrepancies.test.ts`; + 9 cases on
   `buildReviewPayload` (`lib/ai/__tests__/review.test.ts`).
+- [x] **Audit-hallucination filter** (this PR): A May 2026 eval pitting
+  `gemini-2.5-flash` against `gemini-3.1-flash-lite` as the verify
+  model on 3 prod recipe URLs found the lite tier emitted 5/5 false-
+  positive audit issues (claiming primary said "2 cups" when it said
+  "3 cups", inventing "missing" steps that were already in primary,
+  misreading "1-2 minutes" as "1-2 eggs"). Rather than abandon the
+  lite tier (it's ~3× cheaper and faster), we now ground every audit
+  issue against two checks BEFORE translating it to a review-strip
+  discrepancy. The schema gained a `primaryReading` field where the
+  auditor must quote the primary row verbatim — Filter A drops issues
+  where that reading doesn't loosely substring-match the actual
+  primary, catching "auditor lied about primary". Filter B drops
+  issues whose `correctedQuantity`+`correctedUnit` (with Unicode-
+  fraction glyph normalization so `½` ↔ `1/2`) doesn't appear in the
+  source content, catching "auditor invented a source value." Filter
+  A2 drops "missing" issues whose corrected name/text is already in
+  the primary. All three filters bias toward KEEPING issues when
+  uncertain — empty fields, short claims, and image-only extractions
+  bypass the source check rather than risk suppressing a real catch.
+  The audit system prompt was updated to require verbatim quotes
+  with a "DROP" warning so the model doesn't waste tokens guessing.
+  18 new tests in `discrepancies.test.ts` pin the 5 lite false
+  positives as regression cases plus real-catch survival tests for
+  unit substitutions, finishing salts, and Unicode-fraction
+  normalization. Filter activity is logged to
+  `[ai.audit.filter] dropped …` for tuning visibility.
 - [x] **Docs**: DEVELOPMENT.md "AI extraction trust" section covers
   the gate end-to-end, including what we deliberately did NOT build
   (heuristic safety scanner, AI-imported badge, "Keep mine" button).

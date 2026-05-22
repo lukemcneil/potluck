@@ -503,7 +503,19 @@ export async function extractAndVerifyRecipe(
     // We never heard back, so audit cost is zero — don't bill for it.
   } else {
     verifyCost = auditOrTimeout.cost;
-    discrepancies = issuesToDiscrepancies(auditOrTimeout.issues, primary.recipe);
+    // Pull the source-side text out of the prepared user content so
+    // `issuesToDiscrepancies`' Filter B can substring-match audit
+    // claims against what the source actually says. For image
+    // extractions this is empty (the source is image bytes, not
+    // text) — the filter falls back to "primary-side checks only"
+    // in that case, which is the right behavior since we can't
+    // verify source claims for opaque image input.
+    const sourceText = extractSourceText(userParts);
+    discrepancies = issuesToDiscrepancies(
+      auditOrTimeout.issues,
+      primary.recipe,
+      sourceText,
+    );
   }
 
   const totalCost = sumCost(primary.cost, verifyCost);
@@ -578,6 +590,37 @@ async function runAuditPass(
  * text block describing the primary's extracted recipe as JSON and
  * asking the model to audit it.
  */
+/**
+ * Flatten the text portions of a prepared user-content payload into a
+ * single string. Used by `extractAndVerifyRecipe` to feed the
+ * substring-grounding filter (`issuesToDiscrepancies`' Filter B) the
+ * same source content the audit pass saw, so we can drop audit issues
+ * whose `corrected*` claims don't actually appear in the source.
+ *
+ * Image parts (OCR'd by the model, not us) are skipped — for those
+ * inputs the filter falls back to primary-side checks only, which is
+ * appropriate because we genuinely don't have a substring corpus to
+ * verify source claims against.
+ *
+ * For URL extractions this returns the HTML or JSON-LD blob; for text
+ * extractions, the user's pasted note. For image extractions, an
+ * empty string.
+ */
+function extractSourceText(parts: UserContent): string {
+  if (!Array.isArray(parts)) {
+    return typeof parts === "string" ? parts : "";
+  }
+  return parts
+    .map((p) => {
+      if (typeof p === "string") return p;
+      if (p && typeof p === "object" && "type" in p && p.type === "text") {
+        return p.text;
+      }
+      return "";
+    })
+    .join("\n");
+}
+
 function buildAuditUserContent(
   primaryUserParts: UserContent,
   primaryRecipe: ExtractedRecipe,
@@ -659,7 +702,17 @@ Rules:
 - Don't flag cosmetic differences (capitalization, ordering of equivalent phrasing, trailing punctuation, "tablespoons" vs "tbsp" when both are unambiguous).
 - "reason" should be a one-sentence explanation grounded in the source — quote the source if helpful.
 - If everything looks correct, set "looksCorrect": true and return empty arrays. Don't invent issues to fill space.
-- INGREDIENT-ONLY SOURCES: many real-world inputs (Instagram screenshots, magazine "build your own" boxes, hand-written family cards) only list ingredients and have no method/instructions section at all. In that case an empty "steps" array in the extracted recipe is the CORRECT answer — do NOT emit "missing" step issues, and do NOT suggest the extractor "forgot" the steps. Only flag missing steps when the source clearly contains a numbered or paragraph-form method that the extractor failed to transcribe.`;
+- INGREDIENT-ONLY SOURCES: many real-world inputs (Instagram screenshots, magazine "build your own" boxes, hand-written family cards) only list ingredients and have no method/instructions section at all. In that case an empty "steps" array in the extracted recipe is the CORRECT answer — do NOT emit "missing" step issues, and do NOT suggest the extractor "forgot" the steps. Only flag missing steps when the source clearly contains a numbered or paragraph-form method that the extractor failed to transcribe.
+
+GROUNDING REQUIREMENT — every issue you emit will be filtered against the source and the extraction. Issues that fail the checks are SILENTLY DROPPED, which means a real catch you described carelessly is wasted. So:
+
+- "primaryReading": for issues that reference an existing primary row (kind ≠ "missing"), copy the EXTRACTED row's text verbatim here. For ingredients, format as the extracted "<quantity> <unit> <name>". For steps, the extracted step body. Set null only when primary genuinely doesn't have the row (kind="missing").
+
+- "correctedQuantity" / "correctedUnit" / "correctedName" / "correctedText": quote the SOURCE verbatim. If the source says "½ teaspoon" don't transcribe it as "1/2 tsp" — copy the glyphs and units exactly. If you cannot quote the source for a correction, DO NOT EMIT THE ISSUE (you're guessing).
+
+- Before emitting a "missing" step or ingredient issue, RE-READ the extracted recipe one more time. If the supposedly-missing content already appears in any extracted row (even reworded slightly), it isn't missing — DO NOT EMIT.
+
+- Before emitting any issue, check that the corrected value you're claiming actually appears in the source content above. If you cannot find it there, you are hallucinating. DO NOT EMIT.`;
 
 const TIMEOUT_SENTINEL = Symbol("verification-timeout");
 

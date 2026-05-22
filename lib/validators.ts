@@ -205,9 +205,20 @@ export const ingredientIssueWireSchema = z.object({
     "should_be_removed",
     "missing",
   ]),
+  // What the auditor THINKS the previous extraction said for this
+  // row, quoted verbatim. Used by `issuesToDiscrepancies`' Filter A
+  // to drop hallucinations where the auditor mis-quotes the primary
+  // (the lite-class verifier's most common failure mode — claiming
+  // primary said X when it actually said Z). For "missing" issues
+  // primary doesn't have the row, so this is null. See
+  // `lib/ai/discrepancies.ts` for the exact match rules.
+  primaryReading: z.string().trim().max(300).nullable(),
   // For wrong_*: what the ingredient should actually be (from the
   // source). For "missing": the ingredient that should be added.
-  // For "should_be_removed": null (nothing to suggest).
+  // For "should_be_removed": null (nothing to suggest). The audit
+  // prompt requires these be quoted verbatim from the source; Filter
+  // B in `issuesToDiscrepancies` drops issues whose quantity+unit
+  // claim doesn't substring-match the actual source content.
   correctedQuantity: z.string().trim().max(40).nullable(),
   correctedUnit: z.string().trim().max(40).nullable(),
   correctedName: z.string().trim().max(120).nullable(),
@@ -221,6 +232,13 @@ export const stepIssueWireSchema = z.object({
   // Where this step should be inserted, for kind=missing. 0-indexed
   // position in the primary's step array. Null for non-missing.
   insertPosition: z.number().int().min(0).max(200).nullable(),
+  // What the auditor thinks the primary step says, quoted verbatim.
+  // Filter A drops issues whose `primaryReading` doesn't loosely
+  // match the actual primary step body, AND drops `missing` issues
+  // whose `correctedText` already substring-matches some existing
+  // primary step (the auditor invented a "missing" step that's
+  // already there).
+  primaryReading: z.string().trim().max(2000).nullable(),
   correctedText: z.string().trim().max(2000).nullable(),
   reason: z.string().trim().max(300),
 });
