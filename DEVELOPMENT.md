@@ -214,7 +214,7 @@ Components land in `components/ui/`. Don't hand-edit unless you know what you're
 3. **Collection visibility default**: `public`.
 4. **Auth providers**: **Google only**. No email magic link, no Apple, no GitHub.
 5. **Mobile-first** with PWA installability. Desktop is fully supported but not the primary target.
-6. **Recipe upload UX**: User chooses *Extract recipe* (default, AI-parsed, editable preview) or *Just save photos* (image-only recipe, no parsing).
+6. **Recipe upload UX**: User chooses one of five sources on the `/add` choose screen — *Take or pick photos* (AI vision), *Paste a URL* (AI on fetched HTML / JSON-LD), *Paste recipe text* (AI on free-form text from a note app / email / chat), *Type it in* (manual form), or *Photos only* (image-only recipe, no parsing). The first three all funnel through the same `extractAndVerifyRecipe()` pipeline and land on `RecipeForm` with the same verification-gate UX; "Type it in" goes straight to `RecipeForm` with an empty prefill; "Photos only" goes to `RecipeForm` carrying the uploaded photos but no extracted fields.
 7. **Categorization**: 3 layers — Collections (user folders) + structured taxonomy (mealType/cuisine/diet) + free-form tags.
    - **Saves model**: each user has an auto-created `All Saves` collection (`isDefaultSaves: true`, `private`) that's created on first sign-in (or lazily by `saveRecipeAction`). The flat `saves` table is the canonical "is this saved?" lookup; `All Saves` mirrors it. `saveRecipeAction(recipeId, [extraCollectionIds])` adds to both. `unsaveRecipeAction(recipeId)` removes from `saves` and from EVERY collection the user owns. Removing from a single non-default collection uses `removeRecipeFromCollectionAction` and does NOT clear the `saves` row.
 8. **Hosting**: undecided. Code stays portable. Likely Fly.io with a persistent volume, or Cloudflare Tunnel from home.
@@ -475,7 +475,7 @@ All three actions fan out to **push notifications** (see below) for the recipe a
 
 1. Requires sign-in (signed-out users get redirected to `/signin?next=/add` and the share is dropped — accepted v1 friction).
 2. Branches on the payload: URL → `/add?shared=url&url=...`; photos → upload + `/add?shared=photos&ids=A,B,C`; text-only → `/add?shared=text&text=...`.
-3. The `/add` page parses the search params into a `ShareIntent` and hands it to `<AddRecipeFlow initialShare={...}>`. The flow's mount-time effect (deferred to a microtask to keep React 19's `set-state-in-effect` lint happy) then skips the choose tile and calls the appropriate `startExtractionFrom*` directly.
+3. The `/add` page parses the search params into a `ShareIntent` and hands it to `<AddRecipeFlow initialShare={...}>`. The flow's mount-time effect (deferred to a microtask to keep React 19's `set-state-in-effect` lint happy) then skips the choose tile and calls the appropriate `startExtractionFrom*` directly. Text-only shares get a small disambiguation: when the shared text is essentially just a URL (the URL plus < 50 chars of preamble), we hop into the URL flow with the link prefilled; otherwise the share is treated as a real note and prefills the paste-text stage so the user can hit Extract immediately.
 
 **Critical:** all redirects in `share-receive` MUST be built via `lib/server/canonical-url.ts#canonicalUrl(req, path)`, NOT `new URL(path, req.url)`. When Potluck runs behind a reverse proxy (Cloudflare Tunnel, ngrok, nginx, etc) the authority of `req.url` is the INTERNAL bind address (e.g. `http://localhost:8086`), not the public URL the client requested. A redirect built off `req.url` sends back `Location: http://localhost:8086/...`, which on a phone (or any client not on the same loopback) is a broken URL. This was the actual root cause of the "shared to Potluck and it landed on localhost:8086" failure — it had nothing to do with stale PWA installs or the manifest. `canonicalUrl` resolves in this priority: `X-Forwarded-Host` + `X-Forwarded-Proto` headers (set by every well-behaved proxy) → `AUTH_URL` env var (canonical pin used by Auth.js too) → `req.url` as a last-resort fallback for direct localhost dev. Eleven unit tests in `lib/server/__tests__/canonical-url.test.ts` lock the precedence in.
 
@@ -486,8 +486,10 @@ The manifest also declares Android `shortcuts` for "New recipe" and "Open feed" 
 **Platform reality check** (May 2026): Web Share Target is **Android-Chrome-only** in practice. iOS Safari has not implemented the API and there's no public timeline. Desktop browsers don't expose anything. The realistic cross-platform path for "share a recipe to Potluck" is therefore:
 
 - **Android**: install the PWA from the prod URL, then any app's share sheet shows "Potluck". **Gotcha**: the install pins the manifest to whatever host served it at install time, so a stale dev-mode install (localhost, ngrok, an old tunnel host) intercepts share intents and opens that URL. Fix is uninstall + reinstall from the right host — the InstallSheet's Android section calls this out, and the manifest's `id: "/"` keeps Chrome's app-identity stable across reinstalls.
-- **iOS**: no share-to-Potluck possible. The fallback is copy-the-URL-then-paste, which the URL stage of `/add` has a one-tap "Paste link from clipboard" button for (`navigator.clipboard.readText()`, only fires inside a user-gesture click handler to keep iOS's paste-permission popup scoped). The InstallSheet's iOS section explains this flow.
-- **Desktop / any other**: same paste flow.
+- **iOS**: no share-to-Potluck possible. Two paste-based fallbacks instead:
+  - **Recipe URL**: the URL stage of `/add` leads with a full-width "Paste link from clipboard" button (`navigator.clipboard.readText()`, only fires inside a user-gesture click handler to keep iOS's paste-permission popup scoped). The URL input itself is now a secondary affordance under an "or paste manually" divider. The InstallSheet's iOS section explains this flow.
+  - **Recipe text from a note app / email / chat**: a separate "Paste recipe text" tile on the choose screen drops the user into `TextStage`, which mirrors the URL stage (paste-from-clipboard as hero CTA, textarea as fallback) and runs through the same AI extraction pipeline. The same Phase 12 verification gate applies — ambiguous phrasings like "a splash of olive oil" come back marked low-confidence so the importer is forced to confirm them before saving.
+- **Desktop / any other**: same paste flows.
 
 ## Cook mode: screen wake lock
 
@@ -639,7 +641,9 @@ into someone's pan without a human taking a look at it first.
 - **Source pane** (`components/recipe/ReviewSourcePane.tsx`): sticky
   bar at the top of the review form. URL imports get
   "Imported from {domain} → Open original"; photo imports get a
-  thumbnail strip. Either lets the importer eyeball the source
+  thumbnail strip; paste-text imports get a `View source` toggle that
+  expands a capped-height, monospace, scrollable copy of the verbatim
+  paste inline. Either way, the importer can eyeball the source
   without leaving the page.
 - **`sourceUrl` on the recipe detail page** (`app/(app)/r/[id]/page.tsx`):
   surfaces as an "Imported from {domain}" line under the title and an

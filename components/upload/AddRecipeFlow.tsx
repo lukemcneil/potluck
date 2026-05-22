@@ -523,6 +523,12 @@ export function AddRecipeFlow({
         onSubmit={(t) => startExtractionFromText(t)}
         onBack={() => setStage({ kind: "choose" })}
         extractError={extractError}
+        onSwitchToUrl={(url) => {
+          setExtractError(null);
+          setUrlInput(url);
+          setTextInput("");
+          setStage({ kind: "url" });
+        }}
       />
     );
   }
@@ -881,18 +887,40 @@ function UrlStage({
 const MIN_TEXT_CHARS = 20;
 const MAX_TEXT_CHARS = 50_000;
 
+/**
+ * Detect the "user pasted a recipe link into the text box" case.
+ * Returns the matched URL when the paste is essentially just a link
+ * (the URL plus less than ~50 characters of preamble / trailing
+ * chatter like "Check this out: https://… yum"), otherwise null. The
+ * threshold matches the share-intent text-routing heuristic so the
+ * two affordances feel consistent.
+ *
+ * Pure for testability and to keep the component body readable.
+ */
+function detectLinkPaste(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/https?:\/\/[^\s<>"]+/i);
+  if (!match) return null;
+  const url = match[0];
+  if (trimmed.length - url.length >= 50) return null;
+  return url;
+}
+
 function TextStage({
   textInput,
   setTextInput,
   onSubmit,
   onBack,
   extractError,
+  onSwitchToUrl,
 }: {
   textInput: string;
   setTextInput: (next: string) => void;
   onSubmit: (text: string) => void;
   onBack: () => void;
   extractError: string | null;
+  onSwitchToUrl: (url: string) => void;
 }) {
   const [pasteError, setPasteError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -934,7 +962,12 @@ function TextStage({
 
   const trimmed = textInput.trim();
   const tooShort = trimmed.length > 0 && trimmed.length < MIN_TEXT_CHARS;
-  const canSubmit = trimmed.length >= MIN_TEXT_CHARS;
+  const linkPaste = detectLinkPaste(textInput);
+  // A bare URL is not a recipe note — running it through the text
+  // extractor wastes a model call AND skips the URL fetch's
+  // schema-org / og:image niceties. Block submit and offer the
+  // one-tap escape hatch instead.
+  const canSubmit = trimmed.length >= MIN_TEXT_CHARS && !linkPaste;
 
   return (
     <div>
@@ -1007,6 +1040,29 @@ function TextStage({
             </button>
           )}
         </div>
+        {linkPaste && (
+          <div
+            role="status"
+            className="mt-3 flex flex-col gap-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 sm:flex-row sm:items-center dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100"
+          >
+            <span className="flex-1">
+              That looks like a link, not a written recipe. Import it from
+              the URL instead — it&apos;s faster and pulls the page&apos;s
+              hero image.
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => onSwitchToUrl(linkPaste)}
+              className="gap-2 self-start sm:self-auto"
+            >
+              <LinkIcon className="size-4" />
+              Switch to URL import
+            </Button>
+          </div>
+        )}
+
         <Button
           type="submit"
           size="lg"

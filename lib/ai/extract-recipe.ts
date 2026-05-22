@@ -136,13 +136,17 @@ export const URL_MODEL =
  * `lib/ai/model-fallback.ts`). Non-rate-limit errors propagate
  * immediately — falling back to a less capable model on schema
  * failures doesn't help.
+ *
+ * Text-only kinds ("url" and "text") share the cheap text model; the
+ * only kind that needs a vision-capable model is photo input.
+ *
+ * Exported for unit tests; production callers go through
+ * {@link extractRecipe} / {@link extractAndVerifyRecipe}.
  */
-function defaultModelChainFor(
+export function defaultModelChainFor(
   provider: AiProvider,
   kind: ExtractInput["kind"],
 ): string[] {
-  // Text-only kinds ("url" and "text") share the cheap text model;
-  // the only kind that needs a vision-capable model is photo input.
   const isTextOnly = kind === "url" || kind === "text";
   if (provider === "openai") {
     return isTextOnly ? [OPENAI_URL_MODEL_DEFAULT] : [OPENAI_IMAGE_MODEL];

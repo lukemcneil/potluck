@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { auth } from "@/lib/auth";
 import {
   extractAndVerifyRecipe,
   URL_MODEL,
 } from "@/lib/ai/extract-recipe";
+import { extractRequestSchema } from "@/lib/ai/extract-input";
 import { importPageImages } from "@/lib/recipe-import/images";
 import {
   monthlySpendForUser,
@@ -18,24 +18,6 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-const bodySchema = z.union([
-  z.object({
-    kind: z.literal("imageIds"),
-    imageIds: z.array(z.string().min(1)).min(1).max(8),
-  }),
-  z.object({
-    kind: z.literal("url"),
-    url: z.string().url(),
-  }),
-  z.object({
-    kind: z.literal("text"),
-    // 50K cap mirrors TEXT_CHAR_BUDGET in extract-recipe.ts. We keep
-    // a min of 20 so accidental single-word pastes ("yum") fail fast
-    // with a useful error rather than burning a model call.
-    text: z.string().trim().min(20).max(50_000),
-  }),
-]);
 
 export async function POST(req: Request) {
   const session = await auth();
@@ -51,7 +33,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = bodySchema.safeParse(json);
+  const parsed = extractRequestSchema.safeParse(json);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid request body", issues: parsed.error.flatten() },
