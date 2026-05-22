@@ -13,11 +13,13 @@ import {
   AlertTriangle,
   Clipboard,
   CheckCircle2,
+  ClipboardPaste,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   RecipeForm,
   type RecipeFormVerification,
@@ -86,7 +88,15 @@ type Stage =
   | { kind: "choose" }
   | { kind: "photos"; photos: UploadedPhoto[] }
   | { kind: "url" }
-  | { kind: "extracting"; photos?: UploadedPhoto[]; url?: string }
+  | { kind: "text" }
+  | {
+      kind: "extracting";
+      photos?: UploadedPhoto[];
+      url?: string;
+      // Pasted-text imports: not displayed (it can be very long) but
+      // we keep a flag so the loading copy can mention "your note".
+      fromText?: boolean;
+    }
   | {
       kind: "form";
       photos: UploadedPhoto[];
@@ -138,6 +148,7 @@ export function AddRecipeFlow({
   const [stage, setStage] = useState<Stage>({ kind: "choose" });
   const [extractError, setExtractError] = useState<string | null>(null);
   const [urlInput, setUrlInput] = useState("");
+  const [textInput, setTextInput] = useState("");
   const [aiSpend, setAiSpend] = useState<AiSpendSnapshot | null>(initialAiSpend);
 
   // Refresh spend snapshot on mount in case the user already made other
@@ -272,6 +283,48 @@ export function AddRecipeFlow({
     }
   };
 
+  const startExtractionFromText = async (text: string) => {
+    setExtractError(null);
+    setStage({ kind: "extracting", fromText: true });
+    try {
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "text", text }),
+      });
+      const body = (await res.json().catch(() => ({}))) as ExtractApiResponse;
+      applySpendUpdate(body.spend);
+      if (res.status === 422 && body?.error === "no_recipe_found") {
+        setExtractError(
+          body.reason
+            ? `We couldn't find a recipe in that text. ${body.reason} Try a longer note, or use "Type it in" instead.`
+            : "We couldn't find a recipe in that text. Try a longer note, or type it in by hand.",
+        );
+        setStage({ kind: "text" });
+        return;
+      }
+      if (!res.ok || !body.recipe) {
+        throw new Error(body?.error ?? `Extraction failed (${res.status})`);
+      }
+      const review = buildReviewPayload(body.recipe, body.discrepancies ?? []);
+      setStage({
+        kind: "form",
+        photos: [],
+        prefill: prefillFromReview(body.recipe, review),
+        cost: body.cost ?? null,
+        verification: {
+          ingredientFlags: review.ingredientFlags,
+          stepFlags: review.stepFlags,
+          verificationFailed: !!body.verificationFailed,
+          source: { kind: "text", text },
+        },
+      });
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : "Extraction failed");
+      setStage({ kind: "text" });
+    }
+  };
+
   // Web Share Target hand-off: if the page seeded us with an intent,
   // skip the choose tile and jump straight into the appropriate
   // extractor. Declared after `startExtractionFrom*` so React Compiler
@@ -320,15 +373,22 @@ export function AddRecipeFlow({
         return;
       }
       if (initialShare.kind === "text") {
-        // Text-only share: drop into the URL stage with the URL
-        // prefilled when the text contains a link, otherwise fall
-        // through and let the user choose a path manually.
+        // Text-only share: when the text looks like a URL share (a
+        // recipe link copied to the share sheet), strip it out and
+        // hop into the URL flow. Otherwise this is a real note —
+        // route into the paste-text flow with the body prefilled
+        // so the user can hit Extract immediately.
         const text = initialShare.text?.trim() ?? "";
+        if (!text) return;
         const urlMatch = text.match(/https?:\/\/[^\s<>"]+/i);
-        if (urlMatch) {
+        const looksLikeJustALinkShare = urlMatch && text.length - urlMatch[0].length < 50;
+        if (looksLikeJustALinkShare) {
           setUrlInput(urlMatch[0]);
           setStage({ kind: "url" });
+          return;
         }
+        setTextInput(text);
+        setStage({ kind: "text" });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -358,6 +418,13 @@ export function AddRecipeFlow({
             body="Drop a link to a recipe online and we'll bring it home for you."
             badge="Magic"
             onClick={() => setStage({ kind: "url" })}
+          />
+          <Tile
+            icon={<ClipboardPaste className="size-5" />}
+            title="Paste recipe text"
+            body="From a phone note, email, or message. AI turns it into a tidy card."
+            badge="Magic"
+            onClick={() => setStage({ kind: "text" })}
           />
           <Tile
             icon={<Pencil className="size-5" />}
@@ -448,9 +515,26 @@ export function AddRecipeFlow({
     );
   }
 
+  if (stage.kind === "text") {
+    return (
+      <TextStage
+        textInput={textInput}
+        setTextInput={setTextInput}
+        onSubmit={(t) => startExtractionFromText(t)}
+        onBack={() => setStage({ kind: "choose" })}
+        extractError={extractError}
+      />
+    );
+  }
+
   if (stage.kind === "extracting") {
     const approaching = isApproachingCap(aiSpend);
     const isImageExtraction = (stage.photos?.length ?? 0) > 0;
+    const loadingCopy = stage.url
+      ? "Fetching the page and reading it carefully. Usually 15–45 seconds — richer pages with long headnotes take a bit more."
+      : stage.fromText
+        ? "Reading your note and turning it into a recipe card. Usually 10–20 seconds."
+        : `Looking at ${stage.photos?.length ?? 0} photo${(stage.photos?.length ?? 0) === 1 ? "" : "s"} and turning them into a recipe card. Usually 10–20 seconds.`;
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <div className="relative">
@@ -461,9 +545,7 @@ export function AddRecipeFlow({
           Reading the recipe...
         </h2>
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          {stage.url
-            ? "Fetching the page and reading it carefully. Usually 15–45 seconds — richer pages with long headnotes take a bit more."
-            : `Looking at ${stage.photos?.length ?? 0} photo${(stage.photos?.length ?? 0) === 1 ? "" : "s"} and turning them into a recipe card. Usually 10–20 seconds.`}
+          {loadingCopy}
         </p>
         {approaching && aiSpend?.capUsd != null && (
           <div className="mt-6 inline-flex max-w-sm items-start gap-2 rounded-lg border border-amber-300/50 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-100">
@@ -721,11 +803,36 @@ function UrlStage({
     <div>
       <BackButton onClick={onBack} />
       <h1 className="font-display text-2xl font-semibold tracking-tight">
-        Paste a recipe URL
+        Import a recipe from a URL
       </h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        We&apos;ll fetch the page and let you review the parsed recipe.
+        On iPhone in particular, the share sheet won&apos;t add Potluck — copy
+        the link from Safari, then tap below.
       </p>
+
+      {/*
+        Primary CTA is "Paste from clipboard": one tap on mobile, no
+        keyboard juggling. Bumped to a full-width primary button on
+        every breakpoint because the most common iOS path is
+        copy-link → switch apps → paste, and the URL field below is
+        the explicit fallback (typed link, share-sheet hand-off, or
+        a clipboard permission that the browser refuses).
+      */}
+      <Button
+        type="button"
+        onClick={tryPaste}
+        size="lg"
+        className="mt-4 w-full gap-2"
+      >
+        <Clipboard className="size-5" />
+        Paste link from clipboard
+      </Button>
+
+      <div className="mt-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
+        <span aria-hidden className="h-px flex-1 bg-border" />
+        <span>or paste manually</span>
+        <span aria-hidden className="h-px flex-1 bg-border" />
+      </div>
 
       <form
         className="mt-4 flex flex-col gap-2 sm:flex-row"
@@ -747,31 +854,170 @@ function UrlStage({
           value={urlInput}
           onChange={(e) => setUrlInput(e.target.value)}
           inputMode="url"
-          autoFocus
           className="flex-1 text-base"
         />
-        <Button type="submit" size="lg" className="gap-2">
+        <Button type="submit" size="lg" variant="outline" className="gap-2">
           <Sparkles className="size-4" />
           Extract
         </Button>
       </form>
 
+      {(extractError || pasteError) && (
+        <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {extractError ?? pasteError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Paste recipe text" import flow. Mirrors the URL stage's primary-CTA
+ * pattern: paste-from-clipboard is the headline action, with a textarea
+ * underneath as the manual fallback. The minimum-length constraint
+ * (mirrored on the server-side zod schema) keeps obvious "yum" pastes
+ * from burning a model call.
+ */
+const MIN_TEXT_CHARS = 20;
+const MAX_TEXT_CHARS = 50_000;
+
+function TextStage({
+  textInput,
+  setTextInput,
+  onSubmit,
+  onBack,
+  extractError,
+}: {
+  textInput: string;
+  setTextInput: (next: string) => void;
+  onSubmit: (text: string) => void;
+  onBack: () => void;
+  extractError: string | null;
+}) {
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const tryPaste = async () => {
+    setPasteError(null);
+    const cb = navigator.clipboard;
+    if (!cb || typeof cb.readText !== "function") {
+      textareaRef.current?.focus();
+      setPasteError(
+        "Your browser blocks reading the clipboard here. Long-press the box below and tap Paste.",
+      );
+      return;
+    }
+    try {
+      const text = (await cb.readText()).trim();
+      if (!text) {
+        setPasteError("Your clipboard is empty.");
+        return;
+      }
+      // Cap at the server-side max so we don't even try sending an
+      // over-budget paste — the user gets a clear UI affordance
+      // instead of a 400.
+      const capped =
+        text.length > MAX_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : text;
+      setTextInput(capped);
+      // Focus + scroll into view so the user sees what got pasted
+      // before deciding to extract. Auto-submitting felt overeager —
+      // pasted text is often messy (preamble, signatures), so we let
+      // the user clean it up first.
+      textareaRef.current?.focus();
+    } catch {
+      textareaRef.current?.focus();
+      setPasteError(
+        "Couldn't read your clipboard. Long-press the box below and tap Paste.",
+      );
+    }
+  };
+
+  const trimmed = textInput.trim();
+  const tooShort = trimmed.length > 0 && trimmed.length < MIN_TEXT_CHARS;
+  const canSubmit = trimmed.length >= MIN_TEXT_CHARS;
+
+  return (
+    <div>
+      <BackButton onClick={onBack} />
+      <h1 className="font-display text-2xl font-semibold tracking-tight">
+        Paste a recipe from a note
+      </h1>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Paste a recipe you wrote in your phone&apos;s notes app, an email, a
+        message, or anywhere else. AI will turn it into a clean card.
+      </p>
+
       <Button
         type="button"
-        variant="outline"
         onClick={tryPaste}
         size="lg"
-        className="mt-2 w-full gap-2 sm:w-auto"
+        className="mt-4 w-full gap-2"
       >
-        <Clipboard className="size-4" />
-        Paste link from clipboard
+        <Clipboard className="size-5" />
+        Paste from clipboard
       </Button>
 
-      <p className="mt-3 text-xs text-muted-foreground">
-        On iPhone, copy a recipe link from Safari and tap{" "}
-        <span className="font-medium">Paste link from clipboard</span>{" "}
-        to import it.
-      </p>
+      <div className="mt-6 flex items-center gap-3 text-xs uppercase tracking-wider text-muted-foreground">
+        <span aria-hidden className="h-px flex-1 bg-border" />
+        <span>or paste manually</span>
+        <span aria-hidden className="h-px flex-1 bg-border" />
+      </div>
+
+      <form
+        className="mt-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!canSubmit) return;
+          onSubmit(trimmed);
+        }}
+      >
+        <Label htmlFor="recipe-text" className="sr-only">
+          Recipe text
+        </Label>
+        <Textarea
+          ref={textareaRef}
+          id="recipe-text"
+          value={textInput}
+          onChange={(e) => setTextInput(e.target.value)}
+          placeholder={
+            "Mom's chocolate chip cookies\n\n2 1/4 cups flour\n1 tsp baking soda\n1 cup butter\n...\n\nMix the dry ingredients..."
+          }
+          rows={10}
+          maxLength={MAX_TEXT_CHARS}
+          className="min-h-[240px] text-base"
+        />
+        <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            {tooShort
+              ? `Add a bit more — at least ${MIN_TEXT_CHARS} characters.`
+              : trimmed.length > 0
+                ? `${trimmed.length.toLocaleString()} characters`
+                : "Tip: include ingredients and instructions for the best result."}
+          </span>
+          {trimmed.length > 0 && (
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => {
+                setTextInput("");
+                textareaRef.current?.focus();
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <Button
+          type="submit"
+          size="lg"
+          variant="outline"
+          className="mt-3 w-full gap-2"
+          disabled={!canSubmit}
+        >
+          <Sparkles className="size-4" />
+          Extract recipe with AI
+        </Button>
+      </form>
 
       {(extractError || pasteError) && (
         <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">

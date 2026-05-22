@@ -1,8 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ExternalLink, Image as ImageIcon, Link as LinkIcon } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  FileText,
+  Image as ImageIcon,
+  Link as LinkIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,7 +24,12 @@ type SourcePhotosPane = {
   photos: { publicPath: string; width?: number | null; height?: number | null }[];
 };
 
-export type ReviewSource = SourceUrlPane | SourcePhotosPane;
+type SourceTextPane = {
+  kind: "text";
+  text: string;
+};
+
+export type ReviewSource = SourceUrlPane | SourcePhotosPane | SourceTextPane;
 
 /**
  * Sticky source-preview strip rendered above the review form. Lets the
@@ -31,6 +44,9 @@ export type ReviewSource = SourceUrlPane | SourcePhotosPane;
  * surface the affordance.
  */
 export function ReviewSourcePane({ source }: { source: ReviewSource }) {
+  if (source.kind === "text") {
+    return <TextSourcePane text={source.text} />;
+  }
   if (source.kind === "url") {
     let domain = source.url;
     try {
@@ -120,6 +136,64 @@ function Wrapper({ children }: { children: React.ReactNode }) {
       data-print="hide"
     >
       {children}
+    </div>
+  );
+}
+
+/**
+ * Pasted-text imports don't have a URL to open or thumbnails to peek
+ * at, so we offer an inline collapsible source pane: the row keeps the
+ * "Imported from text" label and toggle, and expanding it reveals the
+ * verbatim paste in a capped-height scrollable region underneath. This
+ * lives in its own block instead of {@link Wrapper}'s flex row so the
+ * expanded text can stack below the header on mobile without
+ * stretching the sticky bar.
+ */
+function TextSourcePane({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const trimmed = text.trim();
+  return (
+    <div
+      className={cn(
+        "sticky top-0 z-20 -mx-4 border-b border-border/60",
+        "bg-background/95 px-4 py-2 backdrop-blur",
+        "sm:-mx-6 sm:px-6",
+      )}
+      data-print="hide"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="text-xs text-muted-foreground shrink-0">
+          Imported from
+        </span>
+        <span className="truncate text-sm font-medium">pasted text</span>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls="review-source-text"
+          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium hover:bg-muted"
+        >
+          {open ? "Hide source" : "View source"}
+          {open ? (
+            <ChevronUp className="size-3" aria-hidden />
+          ) : (
+            <ChevronDown className="size-3" aria-hidden />
+          )}
+        </button>
+      </div>
+      {open && (
+        <div
+          id="review-source-text"
+          className={cn(
+            "mt-2 max-h-48 overflow-y-auto rounded-md border border-border/60",
+            "bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground",
+            "whitespace-pre-wrap font-mono",
+          )}
+        >
+          {trimmed}
+        </div>
+      )}
     </div>
   );
 }

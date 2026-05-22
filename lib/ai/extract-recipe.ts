@@ -141,10 +141,13 @@ function defaultModelChainFor(
   provider: AiProvider,
   kind: ExtractInput["kind"],
 ): string[] {
+  // Text-only kinds ("url" and "text") share the cheap text model;
+  // the only kind that needs a vision-capable model is photo input.
+  const isTextOnly = kind === "url" || kind === "text";
   if (provider === "openai") {
-    return kind === "url" ? [OPENAI_URL_MODEL_DEFAULT] : [OPENAI_IMAGE_MODEL];
+    return isTextOnly ? [OPENAI_URL_MODEL_DEFAULT] : [OPENAI_IMAGE_MODEL];
   }
-  const primary = kind === "url" ? GOOGLE_URL_MODEL : GOOGLE_IMAGE_MODEL;
+  const primary = isTextOnly ? GOOGLE_URL_MODEL : GOOGLE_IMAGE_MODEL;
   return uniqueChain([primary, GOOGLE_FALLBACK_MODEL]);
 }
 
@@ -320,7 +323,7 @@ function ensureApiKey(provider: AiProvider) {
 const HTML_CHAR_BUDGET = 150_000;
 
 const SYSTEM_PROMPT = `You are a careful recipe transcription assistant.
-You convert photos and webpages into clean, structured recipes.
+You convert photos, webpages, and free-form text notes into clean, structured recipes.
 
 NOT-A-RECIPE GUARDRAIL (most important rule):
 - If the input does NOT contain a real recipe (e.g. a news article, a login wall, a screenshot of email, a plated-food photo with no readable ingredient list or instructions, a landing/category page that just lists recipe links, an error page, or any image with no readable recipe content), set "notARecipe": true and write a one-sentence "reason" explaining what you saw. Do NOT invent ingredients or steps to fill the schema.
@@ -329,6 +332,7 @@ NOT-A-RECIPE GUARDRAIL (most important rule):
 
 When a recipe IS present:
 - For webpages, you'll be given the page's raw HTML. Look for a JSON-LD <script type="application/ld+json"> block with a Recipe schema first — if present, prefer those values exactly. Otherwise, extract from the visible content. Ignore navigation, ads, comments, and unrelated articles.
+- For free-form text notes (e.g. pasted from a phone note, email, or chat), treat the entire input as recipe source material. The author may have written quantities loosely ("a splash of olive oil", "salt to taste") — preserve them verbatim and mark such rows as "low" confidence. Treat blank lines and bullet-style line breaks as soft list separators when splitting ingredients vs steps.
 - Combine information across all provided images: a multi-page recipe may span them.
 - Preserve quantities exactly as written (fractions like "1 1/2" stay as text).
 - Split each ingredient into quantity, unit, name, and an optional note (e.g. "sifted", "chopped").
@@ -353,7 +357,17 @@ CONFIDENCE (per ingredient and per step):
 export type ExtractInput =
   | { kind: "imageIds"; imageIds: string[] }
   | { kind: "imageDataUrls"; imageDataUrls: string[] }
-  | { kind: "url"; url: string };
+  | { kind: "url"; url: string }
+  | { kind: "text"; text: string };
+
+/**
+ * Hard cap on free-form text input for the "paste a note" path. ~50K
+ * characters is ~12K tokens worst case — more than any real recipe note
+ * needs, and well under the URL HTML budget. Longer pastes get
+ * truncated up-front with a trailing marker so the model never sees a
+ * mid-sentence cut.
+ */
+const TEXT_CHAR_BUDGET = 50_000;
 
 /**
  * Extract a structured recipe from a set of images (by stored id) or a URL.
@@ -853,6 +867,34 @@ export async function buildExtractUserContent(
           `Below is the page's HTML. Extract the primary recipe. If the page lists ` +
           `several recipes, pick the most prominent one.\n\n` +
           `--- BEGIN HTML ---\n${html}\n--- END HTML ---`,
+      },
+    ];
+  }
+
+  if (input.kind === "text") {
+    // Trim and length-guard. Users routinely paste long notes that include
+    // chat preamble or recipe links above the recipe itself, so we keep
+    // formatting intact and let the LLM filter context — we only intervene
+    // when the paste exceeds our budget.
+    const raw = input.text.trim();
+    const text =
+      raw.length > TEXT_CHAR_BUDGET
+        ? `${raw.slice(0, TEXT_CHAR_BUDGET)}\n\n[…truncated]`
+        : raw;
+    console.log(
+      `[ai.extract.text] chars=${text.length} truncated=${raw.length > TEXT_CHAR_BUDGET}`,
+    );
+    return [
+      {
+        type: "text" as const,
+        text:
+          `The user pasted this free-form text from a phone note, email, or chat ` +
+          `and wants to import it as a recipe. Extract the primary recipe — ` +
+          `preserve the author's wording for quantities and steps verbatim ` +
+          `(don't tidy "a splash of olive oil" into "1 tsp olive oil"), but ` +
+          `split each ingredient into quantity/unit/name/note as best you can. ` +
+          `Mark anything ambiguous as "low" confidence so the reviewer can check it.\n\n` +
+          `--- BEGIN TEXT ---\n${text}\n--- END TEXT ---`,
       },
     ];
   }

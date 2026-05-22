@@ -28,6 +28,13 @@ const bodySchema = z.union([
     kind: z.literal("url"),
     url: z.string().url(),
   }),
+  z.object({
+    kind: z.literal("text"),
+    // 50K cap mirrors TEXT_CHAR_BUDGET in extract-recipe.ts. We keep
+    // a min of 20 so accidental single-word pastes ("yum") fail fast
+    // with a useful error rather than burning a model call.
+    text: z.string().trim().min(20).max(50_000),
+  }),
 ]);
 
 export async function POST(req: Request) {
