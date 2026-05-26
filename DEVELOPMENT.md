@@ -623,11 +623,18 @@ into someone's pan without a human taking a look at it first.
   field where the auditor quotes the primary row verbatim; if that
   reading doesn't loosely substring-match the actual primary row, the
   auditor is hallucinating the disagreement and we drop the issue.
-  (b) Filter B — for `wrong_quantity` / `wrong_unit` / `missing`
-  issues, the corrected qty+unit string (with Unicode-fraction
-  normalization so `½` matches `1/2`) must appear verbatim in the
-  source content; if not, the auditor is inventing the source value
-  and we drop. (c) Filter A2 — "missing" issues whose `correctedName`
+  (b) Filter B — for `wrong_quantity` / `wrong_unit` / `wrong_name` /
+  `missing` issues, the corrected qty+unit string (with Unicode-
+  fraction normalization so `½` matches `1/2`) or `correctedName`
+  must appear verbatim in the source content; if not, the auditor
+  is inventing the source value and we drop. The `wrong_name` arm
+  was added after observing a "source specifies a medium-sized egg"
+  false positive on a recipe whose source just says "1 egg" — the
+  audit prompt already commits the model to "if you cannot quote
+  the source, DO NOT EMIT," so the filter is enforcing the contract
+  rather than adding a new strictness lever. Honest paraphrase
+  catches survive because legitimate `wrong_name` flags involve the
+  auditor quoting an exact source word as the correction. (c) Filter A2 — "missing" issues whose `correctedName`
   exactly matches an existing primary ingredient, or whose
   `correctedText` step shares a 5+ word phrase with an existing primary
   step, are dropped (audit invented a "missing" that's already there).

@@ -224,7 +224,15 @@
   positives as regression cases plus real-catch survival tests for
   unit substitutions, finishing salts, and Unicode-fraction
   normalization. Filter activity is logged to
-  `[ai.audit.filter] dropped …` for tuning visibility.
+  `[ai.audit.filter] dropped …` for tuning visibility. **Follow-up
+  (commit `<pending>`):** extended Filter B to `wrong_name` issues
+  after observing a "source specifies a medium-sized egg" false
+  positive (cream puffs URL, source says "1 egg"). The wrong_name
+  arm now requires `correctedName` to substring-match source — the
+  audit prompt already commits the model to "quote source or don't
+  emit," so this enforces the contract rather than adding a new
+  strictness lever. 3 more regression + survival tests; re-running
+  lite on cream puffs now yields `discrepancyCount: 0` cleanly.
 - [x] **Docs**: DEVELOPMENT.md "AI extraction trust" section covers
   the gate end-to-end, including what we deliberately did NOT build
   (heuristic safety scanner, AI-imported badge, "Keep mine" button).

@@ -949,6 +949,84 @@ describe("issuesToDiscrepancies — grounding filter (Filter A + Filter B)", () 
       expect(issuesToDiscrepancies(issues, primary, src)).toEqual([]);
     });
 
+    it("drops a wrong_name issue when the corrected name doesn't appear in source (the 'medium-sized egg' lite false positive)", () => {
+      // Real-world case from the May 2026 lite eval (cream puffs URL):
+      // source says "1 egg", auditor invented "medium-sized egg" as
+      // the corrected name. "medium-sized" appears nowhere in source.
+      // This was the one false positive that survived the original
+      // filter because Filter B was deliberately skipped for
+      // wrong_name; this test pins the case so we don't regress.
+      const primary = recipe({ ingredients: [ing("egg", "1")] });
+      const src =
+        "Ingredients: 50 g raspberries, 30 g butter, 35 g flour, 60 ml water, 1 egg.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_name",
+            primaryReading: "1 egg",
+            correctedName: "medium-sized egg",
+            reason: "Source specifies a medium-sized egg.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toEqual([]);
+    });
+
+    it("KEEPS a wrong_name issue when the corrected name appears verbatim in source (real catch survives — 'leeks' → 'scallions')", () => {
+      // Primary mis-extracted "leeks" when source clearly says
+      // "scallions". Auditor quotes the source verbatim into
+      // correctedName; Filter B confirms grounding and the issue
+      // survives to the review strip.
+      const primary = recipe({ ingredients: [ing("leeks", "2")] });
+      const src =
+        "Ingredients: 2 scallions, thinly sliced. 1 lb chicken, cubed.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_name",
+            primaryReading: "2 leeks",
+            correctedName: "scallions",
+            reason: "Source says scallions, not leeks.",
+          }),
+        ],
+        stepIssues: [],
+      };
+      const out = issuesToDiscrepancies(issues, primary, src);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({
+        kind: "ingredient_mismatch",
+        check: { name: "scallions" },
+      });
+    });
+
+    it("skips the wrong_name source check for very short corrected names (< 3 chars) to avoid trivial false drops", () => {
+      // Single-token short names ("ee", "X", trailing characters)
+      // would trivially substring-match anything; the floor avoids
+      // accidentally suppressing them when the auditor happens to
+      // quote a partial token. Use a 2-char correction.
+      const primary = recipe({ ingredients: [ing("egg", "1")] });
+      const src = "Ingredients: completely unrelated text here.";
+      const issues: ExtractionIssues = {
+        looksCorrect: false,
+        ingredientIssues: [
+          ingIssue({
+            primaryIndex: 0,
+            kind: "wrong_name",
+            primaryReading: "1 egg",
+            correctedName: "ee",
+            reason: "tiny",
+          }),
+        ],
+        stepIssues: [],
+      };
+      expect(issuesToDiscrepancies(issues, primary, src)).toHaveLength(1);
+    });
+
     it("KEEPS a wrong_unit issue when the corrected qty+unit appears verbatim in source (real catch survives)", () => {
       const primary = recipe({ ingredients: [ing("salt", "1", "tsp")] });
       const src = "Ingredients: 1 tbsp salt, 2 cups flour, 3 eggs.";

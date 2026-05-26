@@ -260,9 +260,8 @@ function shouldEmitIngredientIssue(
   }
 
   // Filter B for wrong_quantity / wrong_unit: the combined "qty unit"
-  // claim must appear verbatim in source. Skipped for wrong_name (too
-  // prone to paraphrase, "scallions" vs "green onions") and for
-  // should_be_removed (no source claim to verify).
+  // claim must appear verbatim in source. Skipped for should_be_removed
+  // (no source claim to verify).
   if (
     (issue.kind === "wrong_quantity" || issue.kind === "wrong_unit") &&
     sourceText
@@ -274,6 +273,25 @@ function shouldEmitIngredientIssue(
       const claim = normalizeForSourceSearch(combined);
       const src = normalizeForSourceSearch(sourceText);
       if (claim && !src.includes(claim)) return false;
+    }
+  }
+
+  // Filter B for wrong_name: the corrected name must appear in source.
+  // Originally skipped to avoid suppressing paraphrase catches
+  // ("scallions" vs "green onions"), but observed false positives like
+  // "source specifies a medium-sized egg" (when source just says
+  // "1 egg") were slipping through. The check is faithful to the audit
+  // prompt's "if you cannot quote the source, DO NOT EMIT" rule:
+  // legitimate wrong_name catches involve the auditor quoting an exact
+  // source word for the corrected name, and a paraphrase that doesn't
+  // appear in source was never something to flag in the first place.
+  // 3-char floor avoids trivial false drops on single-token names that
+  // would always match anything.
+  if (issue.kind === "wrong_name" && sourceText && issue.correctedName) {
+    const claim = normalizeForSourceSearch(issue.correctedName);
+    if (claim.length >= 3) {
+      const src = normalizeForSourceSearch(sourceText);
+      if (!src.includes(claim)) return false;
     }
   }
 
