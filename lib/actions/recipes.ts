@@ -17,6 +17,7 @@ import {
 import { auth } from "@/lib/auth";
 import { recipeFormSchema, slugify } from "@/lib/validators";
 import { deriveNumeric } from "@/lib/cooking/numerics";
+import { logEvent } from "@/lib/insights/log";
 
 type State = { error?: string; fieldErrors?: Record<string, string[]> };
 
@@ -164,6 +165,10 @@ export async function createRecipeAction(
   // already force-dynamic) and is the only thing that reliably makes
   // "create recipe → tap Home → see it" work in one shot.
   revalidatePath("/", "layout");
+  // Log AFTER the DB transaction commits so failed creates don't
+  // pollute the analytics ledger. logEvent swallows its own errors —
+  // a backed-up analytics write must not break a recipe save.
+  await logEvent({ kind: "recipe.created", userId, recipeId });
   redirect(`/r/${recipeId}`);
 }
 

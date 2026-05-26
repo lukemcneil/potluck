@@ -311,6 +311,66 @@
 
 ---
 
+## Phase 13 — Operations + insights
+
+- [x] **Backup verification drill** (commit `186553a` + this PR): the
+  DEPLOY.md `/etc/cron.daily/potluck-backup` script was round-tripped
+  end-to-end against a local snapshot of the dev data dir — backup
+  produces an 8.5 MB tarball, untar restores `potluck.db` + `uploads/`
+  cleanly, `PRAGMA integrity_check` returns `ok`, row counts match
+  byte-for-byte (11/11 recipes, 83/83 ingredients, 2/2 users, 76/76
+  upload files, random upload sha256 identical), and an
+  application-level JOIN against the restored DB returns the same
+  recipe→ingredient/step/photo counts as the source. A new "Verifying
+  a backup" subsection in DEPLOY.md documents the non-destructive
+  drill so the procedure can be re-validated against any production
+  tarball without touching live data.
+- [x] **Owner insights dashboard** (this PR): new `events` table
+  (`id`, `userId?`, `recipeId?`, `kind`, `metadata?` JSON,
+  `createdAt`, indexed on `(kind, createdAt)` + `(userId, createdAt)`
+  + `(createdAt)`) plus `lib/insights/log.ts` exposing a closed
+  taxonomy of `EventKind` values (`user.signedup`, `user.signedin`,
+  `recipe.created`, `recipe.imported.{url,photo,text}`,
+  `recipe.viewed`, `recipe.cooked`, `recipe.saved`, `rating.set`,
+  `comment.added`, `shoppinglist.created`). `logEvent` is
+  fire-and-forget and swallows DB errors so analytics breakage can
+  never cascade into a failed save. Wired into the Auth.js
+  `events.createUser` / `events.signIn` hooks, `createRecipeAction`,
+  `setRatingAction`, `addCommentAction`, `saveRecipeAction` (first-save
+  only, mirrors notification behavior), `createShoppingListAction` +
+  `addRecipesToShoppingListAction` (only when a new list is created),
+  `/api/extract` POST (success path only, split by source kind), and
+  the recipe detail page (`recipe.viewed`, skipped when the author
+  views their own recipe so the top-recipes panel isn't dominated by
+  editorial workflow) plus the cook mode page (`recipe.cooked`).
+  Owner-only dashboard at `/admin/insights` (gated by
+  `POTLUCK_OWNER_HANDLE` env var matching `users.handle`; 404 for
+  everyone else, including 404 when the env var is unset to keep the
+  attack surface zero on default deployments). Five panels: header
+  tiles (users / recipes / events / 7d active / 30d active), daily
+  activity sparkline + recent-7-day table, signups timeline + table,
+  breakdown by event kind (horizontal bars), top viewed recipes (with
+  author handle). Charts are inline SVG — no chart library dependency
+  (can swap in `recharts` later if the polish gap becomes worth the
+  bundle). Intentionally NOT building generic pageview tracking
+  (`pageview` events on the layout) — the per-action taxonomy
+  answers "how people use the app" more directly than path-level
+  tracking, and dynamic routes (`/r/[id]`) inflate cardinality
+  without a normalization step we don't yet have. 20 new unit tests
+  cover `logEvent` (insert / metadata JSON encoding / nullable user
+  + recipe / DB-failure swallow), `fetchDailyActivity` (UTC
+  day-bucketing, anonymous-vs-distinct counting, daysBack window),
+  `fetchEventBreakdown` (kind-ordering), `fetchTopRecipes` (ranking
+  + author-handle join + orphan recipe filtering + non-view-kind
+  ignore), `fetchSignupTimeline`, `fetchTotals` (7d/30d active
+  windows), `padDailySeries` (continuous-timeline fill), and the
+  owner-gate helper across no-config / no-session / not-owner / ok
+  variants. Known limitation: Next.js link prefetching may inflate
+  `recipe.viewed` counts on `force-dynamic` pages; relative ranking
+  between recipes stays meaningful even with the noise.
+
+---
+
 ## Deferred (post-v1, do not build yet)
 
 - Follow / followers + "from people you follow" feed

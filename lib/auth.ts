@@ -15,6 +15,7 @@ import {
   authenticators,
   collections,
 } from "@/db/schema";
+import { logEvent } from "@/lib/insights/log";
 
 const adapter = DrizzleAdapter(db, {
   usersTable: users,
@@ -63,6 +64,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           isDefaultSaves: true,
         })
         .onConflictDoNothing();
+      await logEvent({ kind: "user.signedup", userId: user.id });
     },
     /*
      * Force the (app) layout to re-render on sign-in / sign-out so
@@ -78,8 +80,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
      * thing we're throwing away is cached personalized data that the
      * old session can no longer see anyway.
      */
-    async signIn() {
+    async signIn({ user, isNewUser }) {
       revalidatePath("/", "layout");
+      // Auth.js calls signIn for both new and existing users; the new
+      // ones already get a user.signedup row from createUser above,
+      // and that's the more interesting metric, so we don't double-
+      // count them with a signedin row here.
+      if (!isNewUser && user.id) {
+        await logEvent({ kind: "user.signedin", userId: user.id });
+      }
     },
     async signOut() {
       revalidatePath("/", "layout");

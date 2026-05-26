@@ -42,6 +42,7 @@ import {
 } from "@/lib/queries/ratings";
 import { listCommentsForRecipe } from "@/lib/queries/comments";
 import { listShoppingListsForUser } from "@/lib/queries/shopping";
+import { logEvent } from "@/lib/insights/log";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,21 @@ export default async function RecipePage({
 
   // Block private recipes from non-authors.
   if (recipe.visibility === "private" && !isAuthor) notFound();
+
+  // Log a recipe view for analytics — but skip when the author is
+  // looking at their own page (that's editorial workflow, not
+  // engagement signal) so the "top recipes" panel isn't dominated by
+  // the owner's own browsing. Anonymous (signed-out) views still
+  // count, with userId=null. Known limitation: Next.js link
+  // prefetching may double-count for force-dynamic pages; the
+  // relative ranking between recipes stays meaningful even so.
+  if (!isAuthor) {
+    await logEvent({
+      kind: "recipe.viewed",
+      userId: session?.user?.id ?? null,
+      recipeId: recipe.id,
+    });
+  }
 
   const totalMin =
     (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0);

@@ -13,6 +13,7 @@ import {
 import { auth } from "@/lib/auth";
 import { consolidate } from "@/lib/shopping/consolidate";
 import { deriveNumeric } from "@/lib/cooking/numerics";
+import { logEvent } from "@/lib/insights/log";
 
 type ActionResult<T = unknown> = {
   ok: boolean;
@@ -51,6 +52,11 @@ export async function createShoppingListAction(input: {
 
   revalidatePath("/cookbook");
   revalidatePath("/cookbook/lists");
+  await logEvent({
+    kind: "shoppinglist.created",
+    userId: session.user.id,
+    metadata: { source: "empty" },
+  });
   return { ok: true, data: { id } };
 }
 
@@ -183,6 +189,16 @@ export async function addRecipesToShoppingListAction(args: {
   revalidatePath("/cookbook");
   revalidatePath("/cookbook/lists");
   revalidatePath(`/cookbook/lists/${listId}`);
+  // Log a `shoppinglist.created` only when this call actually created
+  // a new list (i.e. `args.targetListId` was null). Appending to an
+  // existing list is a different action and not worth its own bucket.
+  if (!args.targetListId) {
+    await logEvent({
+      kind: "shoppinglist.created",
+      userId,
+      metadata: { source: "from_recipes", recipeCount: accessibleIds.length },
+    });
+  }
   return { ok: true, data: { listId, addedCount: merged.length } };
 }
 

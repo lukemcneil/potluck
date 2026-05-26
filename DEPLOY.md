@@ -150,6 +150,11 @@ POTLUCK_USER_MONTHLY_USD_CAP="2.00"
 
 # Required: keep the database + uploads outside the git checkout.
 POTLUCK_DATA_DIR="/var/lib/potluck"
+
+# Optional: enable the owner-only insights dashboard at /admin/insights.
+# Set to the handle of the user who should see it (find it at /u/<handle>
+# after you sign in once). Leave unset to disable the dashboard entirely.
+POTLUCK_OWNER_HANDLE="your-handle-here"
 ```
 
 Notes on each:
@@ -158,6 +163,7 @@ Notes on each:
 - **`AUTH_URL`**: the full public URL of the app, including `https://`. Auth.js uses it to construct OAuth redirect URIs.
 - **`POTLUCK_USER_MONTHLY_USD_CAP`**: the main lever against runaway cost on an open-registration server. Each user can spend at most this much on `/api/extract` per month; once they hit it the endpoint returns a friendly 402.
 - **`POTLUCK_DATA_DIR`**: must point at the directory you created in step 1.5. The DB file lives at `<dir>/potluck.db` and uploads at `<dir>/uploads/`.
+- **`POTLUCK_OWNER_HANDLE`**: gates the `/admin/insights` dashboard. Must match the `handle` column on your `users` row (set at first sign-in, visible at `/u/<handle>`). Non-owners get a 404, not a "forbidden" — the page does not exist for them. Unset = dashboard is fully disabled.
 
 ---
 
@@ -435,6 +441,36 @@ sudo chown -R potluck:potluck /var/lib/potluck
 sudo systemctl start potluck
 ```
 
+### 10.4 Verifying a backup (do this before you need it)
+
+Untested backups have a way of being corrupt. Do a no-impact drill
+every so often by extracting the tarball into a scratch directory and
+running an integrity check + a content spot-check:
+
+```bash
+mkdir -p /tmp/restore-drill
+sudo cp /var/backups/potluck/potluck-YYYYMMDD-HHMMSS.tar.gz /tmp/restore-drill/
+cd /tmp/restore-drill
+tar -xzf potluck-*.tar.gz
+
+# 1. SQLite integrity — must print "ok".
+sqlite3 potluck.db "PRAGMA integrity_check;"
+
+# 2. Content spot-check — counts should match what you expect for
+#    your install. (Compare against `sudo -u potluck sqlite3
+#    /var/lib/potluck/potluck.db "select count(*) from recipes;"`
+#    on the live DB.)
+sqlite3 potluck.db "select count(*) as recipes from recipes;
+                    select count(*) as users from users;
+                    select count(*) as ratings from recipeRatings;"
+ls uploads | wc -l   # should match the live uploads/ count
+
+rm -rf /tmp/restore-drill
+```
+
+The whole drill is non-destructive — it never touches `/var/lib/potluck`
+— so you can run it from cron if you want continuous assurance.
+
 ---
 
 ## 11. Troubleshooting
@@ -502,3 +538,23 @@ If you want to lock the app to a specific group of people without re-introducing
 ### Read the AI cost ledger as a dashboard
 
 Every user sees their MTD spend on their profile (`/u/<handle>`). Combined with `POTLUCK_USER_MONTHLY_USD_CAP`, this gives you both visibility and a hard ceiling.
+
+### Owner insights dashboard
+
+Set `POTLUCK_OWNER_HANDLE` in `.env.local` to your own handle (the one in your profile URL at `/u/<handle>`) and visit `/admin/insights` after signing in. You'll see:
+
+- Top-line tiles: total users, total recipes, total events, 7-day actives, 30-day actives.
+- Daily activity sparkline (events per day, last 30 days).
+- New signups timeline.
+- Breakdown by event kind (e.g. `recipe.imported.url`, `rating.set`) — tells you which features are actually getting used.
+- Top viewed recipes in the last 30 days (excludes the author viewing their own recipe, so a single power user's own browsing doesn't dominate the list).
+
+The dashboard is 404 for anyone whose handle doesn't match the env var (and for everyone if the var isn't set), so it's safe to leave wired up on a public deployment.
+
+To inspect the underlying ledger directly:
+
+```bash
+sudo -u potluck sqlite3 /var/lib/potluck/potluck.db \
+  "select datetime(createdAt) as t, kind, userId, recipeId, metadata
+     from events order by createdAt desc limit 50;"
+```

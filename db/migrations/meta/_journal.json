@@ -50,6 +50,13 @@
       "when": 1779135919988,
       "tag": "0006_free_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779838741017,
+      "tag": "0007_big_peter_quill",
+      "breakpoints": true
     }
   ]
 }

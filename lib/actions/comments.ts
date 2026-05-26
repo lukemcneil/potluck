@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { recipeComments, recipes } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { notifyCommentForRecipeAuthor } from "@/lib/push/notify";
+import { logEvent } from "@/lib/insights/log";
 
 type ActionResult<T = unknown> = {
   ok: boolean;
@@ -76,6 +77,8 @@ export async function addCommentAction(
     body: trimmed,
     recipeTitle: recipe.title,
   });
+
+  await logEvent({ kind: "comment.added", userId, recipeId });
 
   return { ok: true, data: { id } };
 }

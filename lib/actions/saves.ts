@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { notifySaveForRecipeAuthor } from "@/lib/push/notify";
+import { logEvent } from "@/lib/insights/log";
 
 type ActionResult = { ok: boolean; error?: string };
 
@@ -112,6 +113,11 @@ export async function saveRecipeAction(
       saverName: session.user.name ?? null,
       recipeTitle: recipe.title,
     });
+  }
+  // Only log on a true first-save to mirror notifications: re-saves
+  // when toggling collections shouldn't double-count engagement.
+  if (!wasAlreadySaved) {
+    await logEvent({ kind: "recipe.saved", userId, recipeId });
   }
   return { ok: true };
 }

@@ -7,6 +7,7 @@ import { db } from "@/db/client";
 import { recipes, recipeRatings } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { notifyRatingForRecipeAuthor } from "@/lib/push/notify";
+import { logEvent } from "@/lib/insights/log";
 
 type ActionResult = { ok: boolean; error?: string };
 
@@ -94,6 +95,12 @@ export async function setRatingAction(
       value,
     });
   }
+  await logEvent({
+    kind: "rating.set",
+    userId,
+    recipeId,
+    metadata: { value },
+  });
   return { ok: true };
 }
 

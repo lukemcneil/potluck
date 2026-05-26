@@ -14,6 +14,7 @@ import {
   userMonthlyCapUsd,
   userMonthlySoftCapUsd,
 } from "@/lib/ai/cap";
+import { logEvent, type EventKind } from "@/lib/insights/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,6 +134,25 @@ export async function POST(req: Request) {
         { status: 422 },
       );
     }
+
+    // Log a successful extraction so the owner dashboard can show
+    // import volume split by source. Failures (no-recipe, 5xx,
+    // 400 user errors) intentionally do not log — they're not
+    // meaningful as "people imported X recipes from Y".
+    const importKind: EventKind =
+      parsed.data.kind === "url"
+        ? "recipe.imported.url"
+        : parsed.data.kind === "text"
+          ? "recipe.imported.text"
+          : "recipe.imported.photo";
+    await logEvent({
+      kind: importKind,
+      userId,
+      metadata: {
+        model: result.cost.modelId,
+        costUsd: result.cost.totalCost,
+      },
+    });
 
     return NextResponse.json({
       recipe: result.recipe,

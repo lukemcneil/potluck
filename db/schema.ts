@@ -544,6 +544,50 @@ export const pushSubscriptions = sqliteTable(
   (t) => [index("push_subscriptions_user_idx").on(t.userId)],
 );
 
+/**
+ * Owner-facing analytics ledger: one row per meaningful user action.
+ * Written by `lib/insights/log.ts` (fire-and-forget) and read by the
+ * owner-only dashboard at `/admin/insights`. Intentionally separate
+ * from `aiUsage` (which is cost-tracking specifically) so non-AI
+ * actions like ratings, comments, and cook-mode entries are visible
+ * in the same place.
+ *
+ * `userId` is nullable so a deleted user's activity stays in the
+ * ledger as anonymous (the `set null` cascade preserves the row).
+ * `recipeId` is nullable for the same reason and because some events
+ * (signups) aren't recipe-scoped. `metadata` is JSON-encoded text for
+ * any extra context (e.g. import-source URL for recipe.imported.url);
+ * the dashboard's aggregations don't read it, but it's there for
+ * one-off SQLite queries when investigating.
+ *
+ * Indexes target the dashboard's query shapes: time-bucketed
+ * activity, event-kind breakdown, per-user activity.
+ */
+export const events = sqliteTable(
+  "events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("userId").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    recipeId: text("recipeId").references(() => recipes.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    metadata: text("metadata"),
+    createdAt: integer("createdAt", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("events_kind_created_idx").on(t.kind, t.createdAt),
+    index("events_user_created_idx").on(t.userId, t.createdAt),
+    index("events_created_idx").on(t.createdAt),
+  ],
+);
+
 // Relations export shape kept loose for now; enable when needed for query helpers.
 export const schemaTables = {
   users,
@@ -566,6 +610,7 @@ export const schemaTables = {
   shoppingLists,
   shoppingListItems,
   pushSubscriptions,
+  events,
 };
 
 export const FTS_TABLE_NAME = "recipes_fts";

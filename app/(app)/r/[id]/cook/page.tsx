@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getRecipe } from "@/lib/actions/recipes";
 import { auth } from "@/lib/auth";
 import { CookMode } from "@/components/recipe/CookMode";
+import { logEvent } from "@/lib/insights/log";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,15 @@ export default async function CookPage({
   const session = await auth();
   const isAuthor = session?.user?.id === data.recipe.authorId;
   if (data.recipe.visibility === "private" && !isAuthor) notFound();
+
+  // Cook-mode entry is a strong "I'm actually making this" signal —
+  // log it unconditionally (including the author's own use) so the
+  // owner can see which recipes are getting cooked, not just clicked.
+  await logEvent({
+    kind: "recipe.cooked",
+    userId: session?.user?.id ?? null,
+    recipeId: data.recipe.id,
+  });
 
   return (
     <CookMode
