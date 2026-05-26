@@ -7,7 +7,7 @@ This is the step-by-step guide for putting Potluck on a Linux server you control
 - Cloudflare Tunnel for public HTTPS — no port forwarding, no router config, no static IP needed
 - `systemd` for process management
 - SQLite (one file) + local disk for image uploads — backed up with a one-line cron
-- Family-only via the `POTLUCK_ALLOWED_EMAILS` allowlist
+- Open Google OAuth sign-in (anyone with a Google account can register) — per-user AI spend cap keeps abuse cost bounded
 
 If you want public open registration on a normal VPS with port-forwarded HTTPS via Caddy or nginx, the shape is the same — just swap the Cloudflare Tunnel section for a reverse-proxy config.
 
@@ -42,8 +42,7 @@ Everything that matters for backups lives in `/var/lib/potluck/`. The rest of th
 - SSH access to the server with `sudo`
 - A domain name on Cloudflare (or willing to move one there — it's free and takes ~10 min)
 - A Google Cloud project with an OAuth 2.0 Client ID (you already have one for local dev — you'll just add a new redirect URI)
-- An `OPENAI_API_KEY` with billing enabled
-- The list of email addresses that should be allowed to sign in
+- An `OPENAI_API_KEY` with billing enabled (or a `GOOGLE_GENERATIVE_AI_API_KEY` — see `.env.example`)
 
 Decide your subdomain now — e.g. `potluck.example.com`. Everything below uses that as the placeholder; substitute your real one.
 
@@ -145,11 +144,9 @@ AUTH_GOOGLE_SECRET="..."
 # Required: OpenAI key for AI extraction.
 OPENAI_API_KEY="sk-..."
 
-# Optional but recommended on a shared server: cap per-user monthly AI spend.
+# Strongly recommended on a publicly-reachable server: cap per-user
+# monthly AI spend so a single attacker can't run up a big bill.
 POTLUCK_USER_MONTHLY_USD_CAP="2.00"
-
-# Recommended for private deployments: only these emails can sign in.
-POTLUCK_ALLOWED_EMAILS="me@gmail.com,wife@gmail.com,brother@gmail.com"
 
 # Required: keep the database + uploads outside the git checkout.
 POTLUCK_DATA_DIR="/var/lib/potluck"
@@ -159,7 +156,7 @@ Notes on each:
 
 - **`AUTH_SECRET`**: a random 32-byte secret. Generate with `openssl rand -base64 32`. **Do not reuse** your local-dev value — that just leaked it onto a server.
 - **`AUTH_URL`**: the full public URL of the app, including `https://`. Auth.js uses it to construct OAuth redirect URIs.
-- **`POTLUCK_ALLOWED_EMAILS`**: comma-separated list, case-insensitive. When set, anyone NOT on the list who tries to sign in gets bounced to `/signin?error=AccessDenied` with a friendly "you're not on the guest list" message. Leave it unset to allow open registration.
+- **`POTLUCK_USER_MONTHLY_USD_CAP`**: the main lever against runaway cost on an open-registration server. Each user can spend at most this much on `/api/extract` per month; once they hit it the endpoint returns a friendly 402.
 - **`POTLUCK_DATA_DIR`**: must point at the directory you created in step 1.5. The DB file lives at `<dir>/potluck.db` and uploads at `<dir>/uploads/`.
 
 ---
@@ -337,11 +334,10 @@ Keep your existing `http://localhost:3000/api/auth/callback/google` entry too �
 ## 8. First sign-in + smoke test
 
 1. Open `https://potluck.example.com` from your laptop.
-2. Click **Continue with Google**, sign in with an email that's on `POTLUCK_ALLOWED_EMAILS`.
+2. Click **Continue with Google**, sign in.
 3. You should land on `/feed`.
-4. Try to sign in with an email that's NOT on the list (e.g. ask a friend to try) — they should be bounced back to `/signin?error=AccessDenied` with the "guest list" message.
-5. Add a recipe by URL or photo to confirm AI extraction works end-to-end.
-6. From your phone (on cellular, not your home wifi, to test the full path), open the URL and confirm it loads.
+4. Add a recipe by URL or photo to confirm AI extraction works end-to-end.
+5. From your phone (on cellular, not your home wifi, to test the full path), open the URL and confirm it loads.
 
 ---
 
@@ -459,10 +455,6 @@ curl -I http://127.0.0.1:3000/
 
 If `curl` works but cloudflared doesn't, double-check `service: http://localhost:3000` in `/etc/cloudflared/config.yml`.
 
-### Sign-in succeeds but I see "guest list" message
-
-Your email isn't in `POTLUCK_ALLOWED_EMAILS`, or you typo'd it. Edit `.env.local`, then `sudo systemctl restart potluck`. (Auth.js reads this at process start.)
-
 ### `better-sqlite3` or `sharp` fail to install
 
 Almost always missing system tools. `sudo apt install -y build-essential python3 libvips-dev` and re-run `pnpm install`.
@@ -481,10 +473,6 @@ sudo chown -R potluck:potluck /var/lib/potluck
 sudo -u potluck sqlite3 /var/lib/potluck/potluck.db \
   "select datetime(createdAt) as t, model, totalTokens, costUsd from aiUsage order by createdAt desc limit 20;"
 ```
-
-### How do I add or remove an allowed email without redeploying?
-
-Edit `/opt/potluck/app/.env.local`, then `sudo systemctl restart potluck`. Restart is ~2 seconds; sessions are preserved (DB session strategy).
 
 ### How do I rotate `AUTH_SECRET`?
 
@@ -509,7 +497,7 @@ You don't need to open 80/443 — Cloudflare Tunnel is outbound-only.
 
 ### Cloudflare Access in front of the app
 
-For an extra layer (e.g. require Google SSO at the Cloudflare edge before traffic even hits your server), enable Cloudflare Zero Trust → Access → Self-hosted application on `potluck.example.com`. Pair this with `POTLUCK_ALLOWED_EMAILS` for belt-and-braces auth.
+If you want to lock the app to a specific group of people without re-introducing the app-level allowlist, enable Cloudflare Zero Trust → Access → Self-hosted application on `potluck.example.com`. You can require Google SSO with a specific email allowlist *at the Cloudflare edge*, meaning the request never even reaches your server unless the visitor is on the list. Useful for a "soft-launch to friends" or "share with one small team" scenario.
 
 ### Read the AI cost ledger as a dashboard
 

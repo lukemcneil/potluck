@@ -131,9 +131,9 @@
 ## Phase 10 — Docs + deploy
 
 - [x] Update `README.md` with quickstart + screenshots (`docs/screenshots/{feed-mobile,recipe-detail,cook-mode}.png` captured at mobile width, ~40 KB each)
-- [x] `.env.example` with all required keys (incl. `POTLUCK_ALLOWED_EMAILS` for private deploys)
-- [x] `DEPLOY.md` — home-server deploy via Cloudflare Tunnel + systemd + email allowlist + SQLite backups
-- [x] `POTLUCK_ALLOWED_EMAILS` allowlist in `lib/auth.ts#signIn` callback (+ "not on the guest list" message on `/signin?error=AccessDenied`)
+- [x] `.env.example` with all required keys
+- [x] `DEPLOY.md` — home-server deploy via Cloudflare Tunnel + systemd + SQLite backups (with verified backup/restore procedure)
+- [x] **Auth policy: open registration.** Originally shipped with a `POTLUCK_ALLOWED_EMAILS` allowlist (`/signin?error=AccessDenied` flow) for family-only deploys. Removed when the deployment posture moved to "anyone with a Google account can sign up" — per-user AI spend cap (`POTLUCK_USER_MONTHLY_USD_CAP`) bounds the worst case, and Cloudflare Access can be layered in front of the tunnel if a tighter audience is needed without re-introducing app-level state. Allowlist code is one git revert away if needed.
 - _(Fly.io / Turso paths intentionally not pursued — deploys live on a self-hosted server.)_
 
 ## Phase 11 — Social + utility

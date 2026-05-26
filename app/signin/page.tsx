@@ -23,10 +23,12 @@ export default async function SignInPage({
     redirect(callbackUrl ?? "/feed");
   }
 
-  // Auth.js redirects a rejected sign-in here with ?error=AccessDenied.
-  // That happens when POTLUCK_ALLOWED_EMAILS is set and the address
-  // isn't on the list (typical on family-only / private deployments).
-  const accessDenied = error === "AccessDenied";
+  // Auth.js can redirect here with ?error=<code> when something went
+  // wrong (OAuth callback failure, account-link conflict, transient
+  // provider error). We don't decode the specific code — the messages
+  // Auth.js exposes aren't useful to users — but we do show a generic
+  // banner so the user knows the sign-in didn't silently no-op.
+  const signInError = !!error;
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-12">
@@ -45,10 +47,11 @@ export default async function SignInPage({
           Sign in to build your cookbook and share recipes with the people you cook for.
         </p>
 
-        {accessDenied && (
+        {signInError && (
           <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            That account isn&apos;t on the guest list for this kitchen. If you
-            think it should be, ask whoever sent you the link.
+            We couldn&apos;t complete your sign-in. Please try again — if it
+            keeps failing, the issue is likely on Google&apos;s end and
+            should clear up in a minute or two.
           </div>
         )}
 
